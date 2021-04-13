@@ -3,14 +3,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats
 import importlib
+import numba as nb
 import time
 import random
 import math
 
 # %%
 
-n_bins = 30
-n_dim = 3
+n_bins = 10
+n_dim = 4
 n_sig = 10 * n_bins**n_dim
 n_bkg = 100 * n_bins**n_dim
 print('number of signal events:', n_sig)
@@ -58,12 +59,28 @@ plt.show()
 
 init_state = np.array([[0, n_bins - 1] for i in range(n_dim)], dtype='int')
 
-for i in range(10 - h_signal.ndim):
-    h_signal = np.expand_dims(h_signal, axis=0)
-    h_background = np.expand_dims(h_background, axis=0)
+#%%
+#
+# for i in range(10 - h_signal.ndim):
+#     h_signal = np.expand_dims(h_signal, axis=0)
+#     h_background = np.expand_dims(h_background, axis=0)
+#
+# for i in range(10 - len(init_state)):
+#     init_state = np.concatenate(([[0, 0]], init_state))
+#
+# %%
 
-for i in range(10 - len(init_state)):
-    init_state = np.concatenate(([[0, 0]], init_state))
+
+@nb.njit
+def test(tup):
+    i = 2
+    j = 3
+    t = (tup[i],) + tup[:i] + tup[j:]
+    print(t)
+
+
+test((0, 1, 2, 3, 4, 5))
+
 
 # %%
 
@@ -71,4 +88,4 @@ importlib.reload(annealing)
 
 # %%
 
-best_state, best_energy = annealing.selanneal(init_state, h_signal, h_background, n_bins, n_dim)
+best_state, best_energy = annealing.selanneal(init_state, h_signal, h_background, n_bins)
