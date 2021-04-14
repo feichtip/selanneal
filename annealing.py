@@ -5,40 +5,52 @@ import numba as nb
 
 
 @nb.njit
-def update(h_signal, h_background, n_bins, state, n_dim):
+def update(h_signal, h_background,  state, n_dim):
 
     # change state
     a = random.randint(0, n_dim - 1)
     b = random.randint(0, 1)
-    c = 0
+    choose_from = [-2, -1, 1, 2]
+    c = choose_from[random.randint(0, len(choose_from) - 1)]
 
-    while (c == 0) or (state[a, 1 - b] == state[a, b] + c):
-        c = random.randint(-1, 1)
-
-    if ((b == 0) and (c == 1)) or ((b == 1) and (c == -1)):
-        # when shrinking
-        prevState = state[a, b]
-        sign = -1
-    if ((b == 1) and (c == 1)) or ((b == 0) and (c == -1)):
-        # when expanding
-        prevState = state[a, b] + c
-        sign = +1
+    # while (state[a, 1 - b] == state[a, b] + c):
+    #     c = choose_from[random.randint(0, len(choose_from) - 1)]
 
     state[a, b] = state[a, b] + c
 
-    if state[a, b] > n_bins - 1:
-        state[a, b] = n_bins - 1
+    if state[a, 0] >= state[a, 1]:
+        state[a, b] = state[a, b] - c
+        return 0, 0
+    if state[a, b] > h_signal.shape[a] - 1:
+        state[a, b] = state[a, b] - c
         return 0, 0
     elif state[a, b] < 0:
-        state[a, b] = 0
+        state[a, b] = state[a, b] - c
         return 0, 0
 
     assert(state[a, 0] < state[a, 1])
-    assert(c == -1 or c == 1)
 
     # calculate delta numerator, denominator
     lb_a, ub_a = state[a]
-    state[a] = [prevState, prevState]
+    if b == 0:
+        if c > 0:
+            # when shrinking below
+            state[a] = [lb_a - c, lb_a - 1]
+            sign = -1
+        else:
+            # when expanding below
+            state[a] = [lb_a, lb_a - 1 - c]
+            sign = +1
+    elif b == 1:
+        if c < 0:
+            # when shrinking above
+            state[a] = [ub_a + 1, ub_a - c]
+            sign = -1
+        else:
+            # when expanding above
+            state[a] = [ub_a + 1 - c, ub_a]
+            sign = +1
+
     sl = get_slice(state)
     dNum = sign * h_signal[sl].sum()
     dDen = sign * h_background[sl].sum() + dNum
@@ -104,7 +116,7 @@ def print_progress(progress,  T, E, accept, improve):
 
 
 @nb.njit
-def full_energy(h_signal, h_background, n_bins, state):
+def full_energy(h_signal, h_background,  state):
     sl = get_slice(state)
     n_sig = h_signal[sl].sum()
     n_bkg = h_background[sl].sum()
@@ -116,7 +128,7 @@ def full_energy(h_signal, h_background, n_bins, state):
 
 
 @nb.njit
-def start_anneal(initial_state, h_signal, h_background, n_bins, n_dim, Tmin=0.05, Tmax=1_000, steps=500_000, verbose=True):
+def start_anneal(initial_state, h_signal, h_background,  n_dim, Tmin=0.05, Tmax=1_000, steps=500_000, verbose=True):
     state = initial_state.copy()
 
     numerator = h_signal.sum()
@@ -128,7 +140,7 @@ def start_anneal(initial_state, h_signal, h_background, n_bins, n_dim, Tmin=0.05
     print('steps', steps)
     print('inital energy', E)
 
-    # E = full_energy(h_signal, h_background, n_bins, state)
+    # E = full_energy(h_signal, h_background,  state)
     # print(E)
 
     T_scaling = (Tmin / Tmax) ** (1 / steps)
@@ -147,10 +159,10 @@ def start_anneal(initial_state, h_signal, h_background, n_bins, n_dim, Tmin=0.05
 
     for step in range(steps):
 
-        dNum, dDen = update(h_signal, h_background, n_bins, state, n_dim)
+        dNum, dDen = update(h_signal, h_background,  state, n_dim)
         numerator += dNum
         denominator += dDen
-        # E = full_energy(h_signal, h_background, n_bins, state)
+        # E = full_energy(h_signal, h_background,  state)
         E = energy(numerator, denominator)
 
         # calculate delta e
@@ -187,19 +199,24 @@ def start_anneal(initial_state, h_signal, h_background, n_bins, n_dim, Tmin=0.05
         T *= T_scaling
 
     print('best state\n', best_state.T)
-    print('best energy', best_energy, full_energy(h_signal, h_background, n_bins, best_state))
+    print('best energy', best_energy, full_energy(h_signal, h_background,  best_state))
 
     return best_state, best_energy
 
 
-def selanneal(initial_state, h_signal, h_background, n_bins, Tmin=0.05, Tmax=1_000, steps=500_000, verbose=True):
+def selanneal(initial_state, h_signal, h_background,  Tmin=0.05, Tmax=1_000, steps=500_000, verbose=True):
+
     n_dim = len(initial_state)
+    assert(n_dim == len(h_signal.shape))
+    assert(n_dim == len(h_background.shape))
+    for i in range(n_dim):
+        assert(h_signal.shape[i] == h_background.shape[i])
 
     code = f"""global get_slice\n@nb.njit\ndef get_slice(state):
     return ({", ".join(f"slice(state[{i}, 0], state[{i}, 1] + 1)" for i in range(n_dim))})
     """
     exec(code)
 
-    best_state, best_energy = start_anneal(initial_state, h_signal, h_background, n_bins, n_dim, Tmin=0.05, Tmax=1_000, steps=500_000, verbose=True)
+    best_state, best_energy = start_anneal(initial_state, h_signal, h_background,  n_dim, Tmin=0.05, Tmax=1_000, steps=500_000, verbose=True)
 
     return best_state, best_energy

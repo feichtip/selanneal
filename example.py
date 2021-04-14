@@ -10,13 +10,17 @@ import math
 
 # %%
 
-n_bins = 10
-n_dim = 4
-n_sig = 10 * n_bins**n_dim
-n_bkg = 100 * n_bins**n_dim
+bins = (10, 10, 20, 10)
+n_bins = 1
+for bin in bins:
+    n_bins *= bin
+
+n_dim = len(bins)
+n_sig = 10 * n_bins
+n_bkg = 100 * n_bins
 print('number of signal events:', n_sig)
 print('number of background events:', n_bkg)
-print('number of bins:', n_bins**n_dim)
+print('number of bins:', n_bins)
 
 # %%
 
@@ -43,49 +47,26 @@ def show_state(state, n_bins):
 
 
 coord = scipy.stats.multivariate_normal(np.zeros(n_dim), np.identity(n_dim)).rvs(n_sig)
-h_signal, edges = np.histogramdd(coord, bins=n_bins)
+h_signal, edges = np.histogramdd(coord, bins=bins)
 plt.pcolormesh(project_to_dim(h_signal))
 plt.colorbar()
 plt.show()
 
 # %%
 
-h_background = scipy.stats.poisson(50).rvs(n_bins**n_dim).reshape([n_bins for i in range(n_dim)])
+h_background = scipy.stats.poisson(50).rvs(n_bins).reshape(bins)
 plt.pcolormesh(project_to_dim(h_background))
 plt.colorbar()
 plt.show()
 
 # %%
 
-init_state = np.array([[0, n_bins - 1] for i in range(n_dim)], dtype='int')
+init_state = np.array([[0, bins[i] - 1] for i in range(n_dim)], dtype='int')
 
 #%%
-#
-# for i in range(10 - h_signal.ndim):
-#     h_signal = np.expand_dims(h_signal, axis=0)
-#     h_background = np.expand_dims(h_background, axis=0)
-#
-# for i in range(10 - len(init_state)):
-#     init_state = np.concatenate(([[0, 0]], init_state))
-#
-# %%
-
-
-@nb.njit
-def test(tup):
-    i = 2
-    j = 3
-    t = (tup[i],) + tup[:i] + tup[j:]
-    print(t)
-
-
-test((0, 1, 2, 3, 4, 5))
-
-
-# %%
 
 importlib.reload(annealing)
 
 # %%
 
-best_state, best_energy = annealing.selanneal(init_state, h_signal, h_background, n_bins)
+best_state, best_energy = annealing.selanneal(init_state, h_signal, h_background)
