@@ -5,58 +5,69 @@ import numba as nb
 
 
 @nb.njit
-def update(h_signal, h_background,  state, n_dim):
-
+def choose_state(n_dim):
     # change state
     a = random.randint(0, n_dim - 1)
     b = random.randint(0, 1)
     choose_from = [-2, -1, 1, 2]
     c = choose_from[random.randint(0, len(choose_from) - 1)]
+    return a, b, c
 
-    # while (state[a, 1 - b] == state[a, b] + c):
-    #     c = choose_from[random.randint(0, len(choose_from) - 1)]
 
-    state[a, b] = state[a, b] + c
+@nb.njit
+def valid_state(state, bins, a, b, c):
+    # check boundaries and order of edges
+    if b == 0:
+        if state[a, 0] + c > state[a, 1]:
+            return False
+        if (state[a, 0] + c) < 0:
+            return False
+    elif b == 1:
+        if state[a, 0] > state[a, 1] + c:
+            return False
+        if (state[a, 1] + c) >= bins[a]:
+            return False
 
-    if state[a, 0] >= state[a, 1]:
-        state[a, b] = state[a, b] - c
-        return 0, 0
-    if state[a, b] > h_signal.shape[a] - 1:
-        state[a, b] = state[a, b] - c
-        return 0, 0
-    elif state[a, b] < 0:
-        state[a, b] = state[a, b] - c
-        return 0, 0
+    assert(state[a, 0] <= state[a, 1])
+    assert(state[a, b] < bins[a])
+    assert(state[a, b] >= 0)
 
-    assert(state[a, 0] < state[a, 1])
+    return True
 
+
+@nb.njit
+def get_edge_slice(state, a, b, c):
     # calculate delta numerator, denominator
-    lb_a, ub_a = state[a]
+    sl_state = state.copy()
+    lb_a, ub_a = sl_state[a]
     if b == 0:
         if c > 0:
             # when shrinking below
-            state[a] = [lb_a - c, lb_a - 1]
+            sl_state[a] = [lb_a, lb_a - 1 + c]
             sign = -1
         else:
             # when expanding below
-            state[a] = [lb_a, lb_a - 1 - c]
+            sl_state[a] = [lb_a + c, lb_a - 1]
             sign = +1
     elif b == 1:
         if c < 0:
             # when shrinking above
-            state[a] = [ub_a + 1, ub_a - c]
+            sl_state[a] = [ub_a + 1 + c, ub_a]
             sign = -1
         else:
             # when expanding above
-            state[a] = [ub_a + 1 - c, ub_a]
+            sl_state[a] = [ub_a + 1, ub_a + c]
             sign = +1
 
-    sl = get_slice(state)
-    dNum = sign * h_signal[sl].sum()
-    dDen = sign * h_background[sl].sum() + dNum
-    state[a] = [lb_a, ub_a]
+    return sign, get_slice(sl_state)
 
-    return dNum, dDen
+
+@nb.njit
+def get_bin_slice(state, x, y):
+    # calculate delta numerator, denominator
+    sign = -state[x, y] + ~state[x, y]
+    select_bin = np.asarray([[x, x], [y, y]])
+    return sign, get_slice(select_bin)
 
 
 @nb.njit
@@ -116,23 +127,8 @@ def print_progress(progress,  T, E, accept, improve):
 
 
 @nb.njit
-def full_energy(h_signal, h_background,  state):
-    sl = get_slice(state)
-    n_sig = h_signal[sl].sum()
-    n_bkg = h_background[sl].sum()
-
-    if n_sig + n_bkg != 0:
-        return -n_sig / math.sqrt(n_sig + n_bkg)
-    else:
-        return 0
-
-
-@nb.njit
-def start_anneal(initial_state, h_signal, h_background,  n_dim, Tmin=0.05, Tmax=1_000, steps=500_000, verbose=True):
+def start_anneal(initial_state, h_signal, h_background,  numerator, denominator, Tmin, Tmax, steps, meshg,  bins, n_dim, mode,  verbose):
     state = initial_state.copy()
-
-    numerator = h_signal.sum()
-    denominator = (h_background + h_signal).sum()
 
     E = energy(numerator, denominator)
     print('inital temperature', Tmax)
@@ -146,7 +142,6 @@ def start_anneal(initial_state, h_signal, h_background,  n_dim, Tmin=0.05, Tmax=
     T_scaling = (Tmin / Tmax) ** (1 / steps)
     T = Tmax
 
-    prevState = state.copy()
     prevEnergy = E
     prevNumerator = numerator
     prevDenominator = denominator
@@ -158,65 +153,113 @@ def start_anneal(initial_state, h_signal, h_background,  n_dim, Tmin=0.05, Tmax=
     print_every = int(steps / 50)
 
     for step in range(steps):
+        for a, b in zip(*meshg):
+            if mode == 'edges':
+                valid = False
+                while not valid:
+                    a, b, c = choose_state(n_dim)
+                    valid = valid_state(state, bins, a, b, c)
+                sign, sl = get_edge_slice(state, a, b, c)
+            elif mode == 'bins':
+                c = -1
+                sign, sl = get_bin_slice(state, a, b)
 
-        dNum, dDen = update(h_signal, h_background,  state, n_dim)
-        numerator += dNum
-        denominator += dDen
-        # E = full_energy(h_signal, h_background,  state)
-        E = energy(numerator, denominator)
+            dNum = sign * h_signal[sl].sum()
+            dDen = sign * h_background[sl].sum() + dNum
+            numerator += dNum
+            denominator += dDen
+            E = energy(numerator, denominator)
 
-        # calculate delta e
-        dE = E - prevEnergy
-        # print(numerator, denominator, E, dE)
+            # calculate delta e
+            dE = E - prevEnergy
 
-        # always accept if dE < 0
-        if dE < 0 or math.exp(-dE / T) > random.random():
-            # accept new state
-            accepted += 1
-            if dE < 0.0:
-                improved += 1
-            prevState = state.copy()
+            # always accept if dE < 0
+            if dE < 0 or math.exp(-dE / T) > random.random():
+                # accept new state
+                state[a, b] = abs(state[a, b] + c)
 
-            prevEnergy = E
-            prevNumerator = numerator
-            prevDenominator = denominator
+                accepted += 1
+                if dE < 0.0:
+                    improved += 1
 
-            if E < best_energy:
-                best_state = state.copy()
-                best_energy = E
-        else:
-            # restore previous state
-            state = prevState.copy()
-            E = prevEnergy
-            numerator = prevNumerator
-            denominator = prevDenominator
+                prevEnergy = E
+                prevNumerator = numerator
+                prevDenominator = denominator
+
+                if E < best_energy:
+                    best_state = state.copy()
+                    best_energy = E
+            else:
+                # keep previous state
+                E = prevEnergy
+                numerator = prevNumerator
+                denominator = prevDenominator
 
         if (step // print_every) > ((step - 1) // print_every) and verbose:
-            print_progress(step / steps, T, E, accepted / print_every, improved / print_every)
+            print_progress(step / steps, T, E, accepted / print_every / len(meshg[0]), improved / print_every / len(meshg[0]))
             accepted = 0
             improved = 0
 
         T *= T_scaling
 
-    print('best state\n', best_state.T)
-    print('best energy', best_energy, full_energy(h_signal, h_background,  best_state))
-
     return best_state, best_energy
 
 
-def selanneal(initial_state, h_signal, h_background,  Tmin=0.05, Tmax=1_000, steps=500_000, verbose=True):
+def selanneal(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True, mode='bins'):
 
-    n_dim = len(initial_state)
-    assert(n_dim == len(h_signal.shape))
+    bins = h_signal.shape
+    n_dim = len(bins)
+
     assert(n_dim == len(h_background.shape))
     for i in range(n_dim):
         assert(h_signal.shape[i] == h_background.shape[i])
+
+    if mode == 'bins':
+        initial_state = np.random.randint(0, 2, size=bins, dtype='bool')
+        meshg = np.meshgrid(range(initial_state.shape[0]), range(initial_state.shape[1]))
+        meshg = (meshg[0].flatten(), meshg[1].flatten())
+    elif mode == 'edges':
+        initial_state = np.array([[0, bins[i] - 1] for i in range(n_dim)], dtype='int')
+        meshg = ([0], [0])
 
     code = f"""global get_slice\n@nb.njit\ndef get_slice(state):
     return ({", ".join(f"slice(state[{i}, 0], state[{i}, 1] + 1)" for i in range(n_dim))})
     """
     exec(code)
 
-    best_state, best_energy = start_anneal(initial_state, h_signal, h_background,  n_dim, Tmin=0.05, Tmax=1_000, steps=500_000, verbose=True)
+    numerator, denominator = getNumDen(h_signal, h_background, initial_state, mode)
 
+    best_state, best_energy = start_anneal(initial_state,
+                                           h_signal,
+                                           h_background,
+                                           numerator,
+                                           denominator,
+                                           Tmin,
+                                           Tmax,
+                                           steps,
+                                           meshg,
+                                           bins,
+                                           n_dim,
+                                           mode,
+                                           verbose)
+
+    print('best state\n', best_state)
+
+    numerator, denominator = getNumDen(h_signal, h_background, best_state, mode)
+    energy_check = energy(numerator, denominator)
+    print('best energy', best_energy, energy_check)
     return best_state, best_energy
+
+
+def getNumDen(h_signal, h_background, state, mode):
+    if mode == 'edges':
+        n_dim = len(h_signal.shape)
+        sl = ()
+        for i in range(n_dim):
+            sl += (slice(state[i, 0], state[i, 1] + 1), )
+        state = sl
+
+    n_sig = h_signal[state].sum()
+    n_bkg = h_background[state].sum()
+
+    return n_sig, n_sig + n_bkg

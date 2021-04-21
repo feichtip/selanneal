@@ -7,10 +7,25 @@ import numba as nb
 import time
 import random
 import math
+import argparse
+
+CLI = argparse.ArgumentParser()
+CLI.add_argument(
+    "-m", "--mode",
+    nargs="?",
+    type=str,
+    default='edges',
+)
+args = CLI.parse_args()
+print('mode: ', args.mode)
 
 # %%
 
-bins = (10, 10, 20, 10)
+np.random.seed(42)
+
+# %%
+
+bins = (100, 100)
 n_bins = 1
 for bin in bins:
     n_bins *= bin
@@ -48,25 +63,27 @@ def show_state(state, n_bins):
 
 coord = scipy.stats.multivariate_normal(np.zeros(n_dim), np.identity(n_dim)).rvs(n_sig)
 h_signal, edges = np.histogramdd(coord, bins=bins)
-plt.pcolormesh(project_to_dim(h_signal))
-plt.colorbar()
-plt.show()
+# plt.pcolormesh(project_to_dim(h_signal))
+# plt.colorbar()
+# plt.show()
 
 # %%
 
 h_background = scipy.stats.poisson(50).rvs(n_bins).reshape(bins)
-plt.pcolormesh(project_to_dim(h_background))
-plt.colorbar()
-plt.show()
+# plt.pcolormesh(project_to_dim(h_background))
+# plt.colorbar()
+# plt.show()
 
 # %%
-
-init_state = np.array([[0, bins[i] - 1] for i in range(n_dim)], dtype='int')
-
-#%%
 
 importlib.reload(annealing)
 
 # %%
 
-best_state, best_energy = annealing.selanneal(init_state, h_signal, h_background)
+start = time.time()
+best_state, best_energy = annealing.selanneal(h_signal, h_background, mode=args.mode)
+print(time.time() - start)
+
+if args.mode == 'bins':
+    plt.pcolormesh(best_state)
+    plt.show()
