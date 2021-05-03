@@ -205,7 +205,7 @@ def start_anneal(initial_state, h_signal, h_background,  numerator, denominator,
     return best_state, best_energy
 
 
-def selanneal(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True, mode='bins'):
+def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True, mode='bins'):
 
     bins = h_signal.shape
     n_dim = len(bins)

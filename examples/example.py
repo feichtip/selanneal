@@ -1,4 +1,4 @@
-import annealing
+import selanneal
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats
@@ -8,6 +8,9 @@ import time
 import random
 import math
 import argparse
+# import boost_histogram as bh
+
+# %%
 
 CLI = argparse.ArgumentParser()
 CLI.add_argument(
@@ -61,10 +64,33 @@ def show_state(state, n_bins):
 # %%
 
 
+# generate data points
 coord = scipy.stats.multivariate_normal(np.zeros(n_dim), np.identity(n_dim)).rvs(n_sig)
 h_signal, edges = np.histogramdd(coord, bins=bins)
 # plt.pcolormesh(project_to_dim(h_signal))
 # plt.colorbar()
+# plt.show()
+
+# %%
+
+# # alternative with boost_histogram
+# mins = [-5] * n_dim
+# maxs = [5] * n_dim
+# hist = bh.Histogram(*[bh.axis.Regular(bin, min, max) for bin, min, max in zip(bins, mins, maxs)])
+#
+# sample_size = 10_000_000
+# if n_sig < sample_size:
+#     sample_size = n_sig
+# for i in range(n_sig // sample_size):
+#     print(i)
+#     coord = scipy.stats.multivariate_normal(np.zeros(n_dim), np.identity(n_dim)).rvs(sample_size)
+#     hist.fill(*coord.T)
+# h_signal = hist.view()
+#
+# # Make the plot
+# fig, ax = plt.subplots()
+# mesh = ax.pcolormesh(hist.axes.edges[0].flatten(), hist.axes.edges[1].flatten(), h_signal.sum(axis=tuple(j for j in range(n_dim) if j != 0 and j != 1)))
+# fig.colorbar(mesh)
 # plt.show()
 
 # %%
@@ -76,12 +102,12 @@ h_background = scipy.stats.poisson(50).rvs(n_bins).reshape(bins)
 
 # %%
 
-importlib.reload(annealing)
+importlib.reload(selanneal)
 
 # %%
 
 start = time.time()
-best_state, best_energy = annealing.selanneal(h_signal, h_background, mode=args.mode)
+best_state, best_energy = selanneal.run(h_signal, h_background, mode=args.mode)
 print(time.time() - start)
 
 if args.mode == 'bins':
