@@ -131,13 +131,11 @@ def start_anneal(initial_state, h_signal, h_background,  numerator, denominator,
     state = initial_state.copy()
 
     E = energy(numerator, denominator)
-    print('inital temperature', Tmax)
-    print('final temperature', Tmin)
-    print('steps', steps)
-    print('inital energy', E)
-
-    # E = full_energy(h_signal, h_background,  state)
-    # print(E)
+    if verbose:
+        print('inital temperature:', Tmax)
+        print('final temperature:', Tmin)
+        print('steps:', steps)
+        print('inital energy:', E)
 
     T_scaling = (Tmin / Tmax) ** (1 / steps)
     T = Tmax
@@ -243,11 +241,18 @@ def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True,
                                            mode,
                                            verbose)
 
-    print('best state\n', best_state)
+    if verbose:
+        print('\nbest energy:', best_energy)
 
+    # calculate the energy again based on the best state and check if it is consistent
     numerator, denominator = getNumDen(h_signal, h_background, best_state, mode)
     energy_check = energy(numerator, denominator)
-    print('best energy', best_energy, energy_check)
+    assert(np.isclose(best_energy, energy_check))
+
+    if mode == 'edges':
+        # returns the index for the bin edges that gives the correct cut value
+        best_state = [(state[0], state[1] + 1) for state in best_state]
+
     return best_state, best_energy
 
 
