@@ -71,9 +71,9 @@ def get_bin_slice(state, x, y):
 
 
 @nb.njit
-def energy(numerator, denominator):
-    if denominator != 0:
-        return -numerator / math.sqrt(denominator)
+def energy(Nsig, Nbkg):
+    if (Nsig + Nbkg) != 0:
+        return -Nsig / math.sqrt(Nsig + Nbkg)
     else:
         return 0
 
@@ -127,10 +127,10 @@ def print_progress(progress,  T, E, accept, improve):
 
 
 @nb.njit
-def start_anneal(initial_state, h_signal, h_background,  numerator, denominator, Tmin, Tmax, steps, meshg,  bins, n_dim, mode,  verbose):
+def start_anneal(initial_state, h_signal, h_background,  Nsig, Nbkg, Tmin, Tmax, steps, meshg,  bins, n_dim, mode,  verbose):
     state = initial_state.copy()
 
-    E = energy(numerator, denominator)
+    E = energy(Nsig, Nbkg)
     if verbose:
         print('inital temperature:', Tmax)
         print('final temperature:', Tmin)
@@ -140,9 +140,9 @@ def start_anneal(initial_state, h_signal, h_background,  numerator, denominator,
     T_scaling = (Tmin / Tmax) ** (1 / steps)
     T = Tmax
 
-    prevEnergy = E
-    prevNumerator = numerator
-    prevDenominator = denominator
+    prev_E = E
+    prev_Nsig = Nsig
+    prev_Nbkg = Nbkg
 
     best_energy = E
 
@@ -162,14 +162,14 @@ def start_anneal(initial_state, h_signal, h_background,  numerator, denominator,
                 c = -1
                 sign, sl = get_bin_slice(state, a, b)
 
-            dNum = sign * h_signal[sl].sum()
-            dDen = sign * h_background[sl].sum() + dNum
-            numerator += dNum
-            denominator += dDen
-            E = energy(numerator, denominator)
+            dNsig = sign * h_signal[sl].sum()
+            dNbkg = sign * h_background[sl].sum()
+            Nsig += dNsig
+            Nbkg += dNbkg
+            E = energy(Nsig, Nbkg)
 
             # calculate delta e
-            dE = E - prevEnergy
+            dE = E - prev_E
 
             # always accept if dE < 0
             if dE < 0 or math.exp(-dE / T) > random.random():
@@ -180,18 +180,18 @@ def start_anneal(initial_state, h_signal, h_background,  numerator, denominator,
                 if dE < 0.0:
                     improved += 1
 
-                prevEnergy = E
-                prevNumerator = numerator
-                prevDenominator = denominator
+                prev_E = E
+                prev_Nsig = Nsig
+                prev_Nbkg = Nbkg
 
                 if E < best_energy:
                     best_state = state.copy()
                     best_energy = E
             else:
                 # keep previous state
-                E = prevEnergy
-                numerator = prevNumerator
-                denominator = prevDenominator
+                E = prev_E
+                Nsig = prev_Nsig
+                Nbkg = prev_Nbkg
 
         if (step // print_every) > ((step - 1) // print_every) and verbose:
             print_progress(step / steps, T, E, accepted / print_every / len(meshg[0]), improved / print_every / len(meshg[0]))
@@ -225,15 +225,13 @@ def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True,
     """
     exec(code)
 
-    n_sig, n_bkg = n_events(h_signal, h_background, initial_state, mode)
-    numerator = n_sig
-    denominator = n_sig + n_bkg
+    Nsig, Nbkg = n_events(h_signal, h_background, initial_state, mode)
 
     best_state, best_energy = start_anneal(initial_state,
                                            h_signal,
                                            h_background,
-                                           numerator,
-                                           denominator,
+                                           Nsig,
+                                           Nbkg,
                                            Tmin,
                                            Tmax,
                                            steps,
@@ -247,8 +245,8 @@ def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True,
         print('\nbest energy:', best_energy)
 
     # calculate the energy again based on the best state and check if it is consistent
-    n_sig, n_bkg = n_events(h_signal, h_background, best_state, mode)
-    energy_check = energy(n_sig, n_sig + n_bkg)
+    Nsig, Nbkg = n_events(h_signal, h_background, best_state, mode)
+    energy_check = energy(Nsig, Nbkg)
     assert(np.isclose(best_energy, energy_check))
 
     if mode == 'edges':
@@ -266,7 +264,7 @@ def n_events(h_signal, h_background, state, mode):
             sl += (slice(*state[i]), )
         state = sl
 
-    n_sig = h_signal[state].sum()
-    n_bkg = h_background[state].sum()
+    Nsig = h_signal[state].sum()
+    Nbkg = h_background[state].sum()
 
-    return n_sig, n_bkg
+    return Nsig, Nbkg
