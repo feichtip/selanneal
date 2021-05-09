@@ -18,18 +18,18 @@ def choose_state(n_dim):
 def valid_state(state, bins, a, b, c):
     # check boundaries and order of edges
     if b == 0:
-        if state[a, 0] + c > state[a, 1]:
+        if state[a, 0] + c >= state[a, 1]:
             return False
         if (state[a, 0] + c) < 0:
             return False
     elif b == 1:
-        if state[a, 0] > state[a, 1] + c:
+        if state[a, 0] >= state[a, 1] + c:
             return False
-        if (state[a, 1] + c) >= bins[a]:
+        if (state[a, 1] + c) > bins[a]:
             return False
 
-    assert(state[a, 0] <= state[a, 1])
-    assert(state[a, b] < bins[a])
+    assert(state[a, 0] < state[a, 1])
+    assert(state[a, b] <= bins[a])
     assert(state[a, b] >= 0)
 
     return True
@@ -43,20 +43,20 @@ def get_edge_slice(state, a, b, c):
     if b == 0:
         if c > 0:
             # when shrinking below
-            sl_state[a] = [lb_a, lb_a - 1 + c]
+            sl_state[a] = [lb_a, lb_a + c]
             sign = -1
         else:
             # when expanding below
-            sl_state[a] = [lb_a + c, lb_a - 1]
+            sl_state[a] = [lb_a + c, lb_a]
             sign = +1
     elif b == 1:
         if c < 0:
             # when shrinking above
-            sl_state[a] = [ub_a + 1 + c, ub_a]
+            sl_state[a] = [ub_a + c, ub_a]
             sign = -1
         else:
             # when expanding above
-            sl_state[a] = [ub_a + 1, ub_a + c]
+            sl_state[a] = [ub_a, ub_a + c]
             sign = +1
 
     return sign, get_slice(sl_state)
@@ -66,7 +66,7 @@ def get_edge_slice(state, a, b, c):
 def get_bin_slice(state, x, y):
     # calculate delta numerator, denominator
     sign = -state[x, y] + ~state[x, y]
-    select_bin = np.asarray([[x, x], [y, y]])
+    select_bin = np.asarray([[x, x + 1], [y, y + 1]])
     return sign, get_slice(select_bin)
 
 
@@ -217,15 +217,17 @@ def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True,
         meshg = np.meshgrid(range(initial_state.shape[0]), range(initial_state.shape[1]))
         meshg = (meshg[0].flatten(), meshg[1].flatten())
     elif mode == 'edges':
-        initial_state = np.array([[0, bins[i] - 1] for i in range(n_dim)], dtype='int')
+        initial_state = np.array([[0, bins[i]] for i in range(n_dim)], dtype='int')
         meshg = ([0], [0])
 
     code = f"""global get_slice\n@nb.njit\ndef get_slice(state):
-    return ({", ".join(f"slice(state[{i}, 0], state[{i}, 1] + 1)" for i in range(n_dim))})
+    return ({", ".join(f"slice(state[{i}, 0], state[{i}, 1])" for i in range(n_dim))})
     """
     exec(code)
 
-    numerator, denominator = getNumDen(h_signal, h_background, initial_state, mode)
+    n_sig, n_bkg = n_events(h_signal, h_background, initial_state, mode)
+    numerator = n_sig
+    denominator = n_sig + n_bkg
 
     best_state, best_energy = start_anneal(initial_state,
                                            h_signal,
@@ -245,26 +247,26 @@ def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True,
         print('\nbest energy:', best_energy)
 
     # calculate the energy again based on the best state and check if it is consistent
-    numerator, denominator = getNumDen(h_signal, h_background, best_state, mode)
-    energy_check = energy(numerator, denominator)
+    n_sig, n_bkg = n_events(h_signal, h_background, best_state, mode)
+    energy_check = energy(n_sig, n_sig + n_bkg)
     assert(np.isclose(best_energy, energy_check))
 
     if mode == 'edges':
         # returns the index for the bin edges that gives the correct cut value
-        best_state = [(state[0], state[1] + 1) for state in best_state]
+        best_state = [(state[0], state[1]) for state in best_state]
 
     return best_state, best_energy
 
 
-def getNumDen(h_signal, h_background, state, mode):
+def n_events(h_signal, h_background, state, mode):
     if mode == 'edges':
         n_dim = len(h_signal.shape)
         sl = ()
         for i in range(n_dim):
-            sl += (slice(state[i, 0], state[i, 1] + 1), )
+            sl += (slice(*state[i]), )
         state = sl
 
     n_sig = h_signal[state].sum()
     n_bkg = h_background[state].sum()
 
-    return n_sig, n_sig + n_bkg
+    return n_sig, n_bkg
