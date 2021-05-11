@@ -18,10 +18,6 @@ This package was written for applications in high energy physics but can apply t
 python3 -m pip install selanneal
 ```
 * tutorial notebooks for basic usage in *examples*
-* data is to be provided as numpy arrays representing the histogrammed number of signal and background events
-* hyper-parameters to tune the optimisation:
-![alt text](https://latex.codecogs.com/gif.latex?T_{\sf&space;min} ""),
-![alt text](https://latex.codecogs.com/gif.latex?T_{\sf&space;max} ""),
-![alt text](https://latex.codecogs.com/gif.latex?N_{\sf&space;steps} "")
-* the implemented figure of merit is
-![alt text](https://latex.codecogs.com/gif.latex?\frac{N_{\sf&space;sig}}{N_{\sf&space;sig}&plus;N_{\sf&space;bkg}} "")
+* training data is to be provided as numpy arrays representing the histogrammed number of signal and background events
+* hyper-parameters to tune the optimisation: <img src="https://render.githubusercontent.com/render/math?math=T_{max},T_{min},N_{steps}">
+* the implemented figure of merit is <img src="https://render.githubusercontent.com/render/math?math=\frac{N_{sig}}{\sqrt{N_{sig}\cdot%20N_{bkg}}}">
