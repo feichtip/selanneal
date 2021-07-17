@@ -107,7 +107,7 @@ importlib.reload(selanneal)
 # %%
 
 start = time.time()
-best_state, best_energy = selanneal.run(h_signal, h_background, mode=args.mode)
+best_state, best_energy = selanneal.run(h_signal, h_background, mode=args.mode, coupling=0.005)
 print(time.time() - start)
 
 if args.mode == 'bins':

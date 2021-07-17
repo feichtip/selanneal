@@ -127,7 +127,21 @@ def print_progress(progress,  T, E, accept, improve):
 
 
 @nb.njit
-def start_anneal(initial_state, h_signal, h_background,  Nsig, Nbkg, Tmin, Tmax, steps, meshg,  bins, n_dim, mode,  verbose):
+def bin_coupling(state, x, y, bins, strength):
+    not_border_x = np.array([x != 0, x != 0, x != 0, True, x != (bins[0] - 1), x != (bins[0] - 1), x != (bins[0] - 1), True])
+    not_border_y = np.array([True, y != 0, y != (bins[1] - 1), y != 0, True, y != 0, y != (bins[1] - 1), y != (bins[1] - 1)])
+
+    x_not_border = (x + np.array([-1, -1, -1, 0, 1, 1, 1, 0]))[not_border_x & not_border_y]
+    y_not_border = (y + np.array([0, -1, 1, -1, 0, -1, 1, 1]))[not_border_x & not_border_y]
+
+    # same_state = state[x_not_border, y_not_border] == state[x, y] # does not work with numba
+    same_state = np.asarray([state[a, b] for a, b in zip(x_not_border, y_not_border)]) == state[x, y]
+
+    return strength * (same_state.sum() - (~same_state).sum())
+
+
+@nb.njit
+def start_anneal(initial_state, h_signal, h_background,  Nsig, Nbkg, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
     state = initial_state.copy()
 
     E = energy(Nsig, Nbkg)
@@ -145,6 +159,7 @@ def start_anneal(initial_state, h_signal, h_background,  Nsig, Nbkg, Tmin, Tmax,
     prev_Nbkg = Nbkg
 
     best_energy = E
+    best_state = state.copy()
 
     accepted = 0
     improved = 0
@@ -170,6 +185,9 @@ def start_anneal(initial_state, h_signal, h_background,  Nsig, Nbkg, Tmin, Tmax,
 
             # calculate delta e
             dE = E - prev_E
+
+            if (mode == 'bins') and (coupling != 0):
+                dE += bin_coupling(state, a, b, bins, coupling)
 
             # always accept if dE < 0
             if dE < 0 or math.exp(-dE / T) > random.random():
@@ -203,16 +221,18 @@ def start_anneal(initial_state, h_signal, h_background,  Nsig, Nbkg, Tmin, Tmax,
     return best_state, best_energy
 
 
-def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True, mode='bins'):
+def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
 
     bins = h_signal.shape
     n_dim = len(bins)
+    # bins = bins + (0, )  # to have at least 2 dimensions
 
     assert(n_dim == len(h_background.shape))
     for i in range(n_dim):
         assert(h_signal.shape[i] == h_background.shape[i])
 
     if mode == 'bins':
+        assert(n_dim == 2)
         initial_state = np.random.randint(0, 2, size=bins, dtype='bool')
         meshg = np.meshgrid(range(initial_state.shape[0]), range(initial_state.shape[1]))
         meshg = (meshg[0].flatten(), meshg[1].flatten())
@@ -225,7 +245,7 @@ def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True,
     """
     exec(code)
 
-    Nsig, Nbkg = n_events(h_signal, h_background, initial_state, mode)
+    Nsig, Nbkg = n_events(h_signal, h_background, initial_state, mode, n_dim)
 
     best_state, best_energy = start_anneal(initial_state,
                                            h_signal,
@@ -238,6 +258,7 @@ def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True,
                                            meshg,
                                            bins,
                                            n_dim,
+                                           coupling,
                                            mode,
                                            verbose)
 
@@ -245,7 +266,7 @@ def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True,
         print('\nbest energy:', best_energy)
 
     # calculate the energy again based on the best state and check if it is consistent
-    Nsig, Nbkg = n_events(h_signal, h_background, best_state, mode)
+    Nsig, Nbkg = n_events(h_signal, h_background, best_state, mode, n_dim)
     energy_check = energy(Nsig, Nbkg)
     assert(np.isclose(best_energy, energy_check))
 
@@ -256,9 +277,8 @@ def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, verbose=True,
     return best_state, best_energy
 
 
-def n_events(h_signal, h_background, state, mode):
+def n_events(h_signal, h_background, state, mode, n_dim):
     if mode == 'edges':
-        n_dim = len(h_signal.shape)
         sl = ()
         for i in range(n_dim):
             sl += (slice(*state[i]), )
