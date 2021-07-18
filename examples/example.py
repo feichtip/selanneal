@@ -100,6 +100,11 @@ h_background = scipy.stats.poisson(50).rvs(n_bins).reshape(bins)
 # plt.colorbar()
 # plt.show()
 
+#%%
+
+h_sys_up = scipy.stats.poisson(0.1).rvs(n_bins).reshape(bins)
+h_sys_down = scipy.stats.poisson(0.1).rvs(n_bins).reshape(bins)
+
 # %%
 
 importlib.reload(selanneal)
@@ -107,9 +112,11 @@ importlib.reload(selanneal)
 # %%
 
 start = time.time()
-best_state, best_energy = selanneal.run(h_signal, h_background, mode=args.mode, coupling=0.005)
+best_state, best_energy = selanneal.run(h_signal, h_background, h_sys_up, h_sys_down, mode=args.mode, coupling=0.005)
 print(time.time() - start)
 
 if args.mode == 'bins':
     plt.pcolormesh(best_state)
     plt.show()
+else:
+    print(best_state)

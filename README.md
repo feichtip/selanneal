@@ -20,4 +20,4 @@ python3 -m pip install selanneal
 * tutorial notebooks for basic usage in *examples*
 * training data is to be provided as numpy arrays representing the histogrammed number of signal and background events
 * hyper-parameters to tune the optimisation: <img src="https://render.githubusercontent.com/render/math?math=T_{max},T_{min},N_{steps}">
-* the implemented figure of merit is <img src="https://render.githubusercontent.com/render/math?math=\frac{N_{sig}}{\sqrt{N_{sig}\cdot%20N_{bkg}}}">
+* the implemented figure of merit is <img src="https://render.githubusercontent.com/render/math?math=\frac{N_{sig}}{\sqrt{N_{sig}%2bN_{bkg}}}">

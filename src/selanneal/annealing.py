@@ -71,9 +71,9 @@ def get_bin_slice(state, x, y):
 
 
 @nb.njit
-def energy(Nsig, Nbkg):
+def energy(Nsig, Nbkg, sysUp, sysDown):
     if (Nsig + Nbkg) != 0:
-        return -Nsig / math.sqrt(Nsig + Nbkg)
+        return -Nsig / math.sqrt(Nsig + Nbkg + ((sysUp + sysDown) / 2)**2)
     else:
         return 0
 
@@ -141,10 +141,10 @@ def bin_coupling(state, x, y, bins, strength):
 
 
 @nb.njit
-def start_anneal(initial_state, h_signal, h_background,  Nsig, Nbkg, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
+def start_anneal(initial_state, h_signal, h_background, h_sys_up, h_sys_down, Nsig, Nbkg, sysUp, sysDown, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
     state = initial_state.copy()
 
-    E = energy(Nsig, Nbkg)
+    E = energy(Nsig, Nbkg, sysUp, sysDown)
     if verbose:
         print('inital temperature:', Tmax)
         print('final temperature:', Tmin)
@@ -157,6 +157,8 @@ def start_anneal(initial_state, h_signal, h_background,  Nsig, Nbkg, Tmin, Tmax,
     prev_E = E
     prev_Nsig = Nsig
     prev_Nbkg = Nbkg
+    prev_sysUp = sysUp
+    prev_sysDown = sysDown
 
     best_energy = E
     best_state = state.copy()
@@ -179,13 +181,20 @@ def start_anneal(initial_state, h_signal, h_background,  Nsig, Nbkg, Tmin, Tmax,
 
             dNsig = sign * h_signal[sl].sum()
             dNbkg = sign * h_background[sl].sum()
+
+            dSysUp = 0 if h_sys_up is None else sign * h_sys_up[sl].sum()
+            dSysDown = 0 if h_sys_down is None else sign * h_sys_down[sl].sum()
+
             Nsig += dNsig
             Nbkg += dNbkg
-            E = energy(Nsig, Nbkg)
+            sysUp += dSysUp
+            sysDown += dSysDown
+            E = energy(Nsig, Nbkg, sysUp, sysDown)
 
             # calculate delta e
             dE = E - prev_E
 
+            # add coupling to delta E
             if (mode == 'bins') and (coupling != 0):
                 dE += bin_coupling(state, a, b, bins, coupling)
 
@@ -201,6 +210,8 @@ def start_anneal(initial_state, h_signal, h_background,  Nsig, Nbkg, Tmin, Tmax,
                 prev_E = E
                 prev_Nsig = Nsig
                 prev_Nbkg = Nbkg
+                prev_sysUp = sysUp
+                prev_sysDown = sysDown
 
                 if E < best_energy:
                     best_state = state.copy()
@@ -210,6 +221,8 @@ def start_anneal(initial_state, h_signal, h_background,  Nsig, Nbkg, Tmin, Tmax,
                 E = prev_E
                 Nsig = prev_Nsig
                 Nbkg = prev_Nbkg
+                sysUp = prev_sysUp
+                sysDown = prev_sysDown
 
         if (step // print_every) > ((step - 1) // print_every) and verbose:
             print_progress(step / steps, T, E, accepted / print_every / len(meshg[0]), improved / print_every / len(meshg[0]))
@@ -221,7 +234,7 @@ def start_anneal(initial_state, h_signal, h_background,  Nsig, Nbkg, Tmin, Tmax,
     return best_state, best_energy
 
 
-def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
+def run(h_signal, h_background, h_sys_up=None, h_sys_down=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
 
     bins = h_signal.shape
     n_dim = len(bins)
@@ -245,13 +258,17 @@ def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, coupling=0, v
     """
     exec(code)
 
-    Nsig, Nbkg = n_events(h_signal, h_background, initial_state, mode, n_dim)
+    Nsig, Nbkg, sysUp, sysDown = n_events(h_signal, h_background, h_sys_up, h_sys_down, initial_state, mode, n_dim)
 
     best_state, best_energy = start_anneal(initial_state,
                                            h_signal,
                                            h_background,
+                                           h_sys_up,
+                                           h_sys_down,
                                            Nsig,
                                            Nbkg,
+                                           sysUp,
+                                           sysDown,
                                            Tmin,
                                            Tmax,
                                            steps,
@@ -266,8 +283,8 @@ def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, coupling=0, v
         print('\nbest energy:', best_energy)
 
     # calculate the energy again based on the best state and check if it is consistent
-    Nsig, Nbkg = n_events(h_signal, h_background, best_state, mode, n_dim)
-    energy_check = energy(Nsig, Nbkg)
+    Nsig, Nbkg, sysUp, sysDown = n_events(h_signal, h_background, h_sys_up, h_sys_down, best_state, mode, n_dim)
+    energy_check = energy(Nsig, Nbkg, sysUp, sysDown)
     assert(np.isclose(best_energy, energy_check))
 
     if mode == 'edges':
@@ -277,7 +294,7 @@ def run(h_signal, h_background,  Tmin=0.001, Tmax=10, steps=1_000, coupling=0, v
     return best_state, best_energy
 
 
-def n_events(h_signal, h_background, state, mode, n_dim):
+def n_events(h_signal, h_background, h_sys_up, h_sys_down, state, mode, n_dim):
     if mode == 'edges':
         sl = ()
         for i in range(n_dim):
@@ -287,4 +304,7 @@ def n_events(h_signal, h_background, state, mode, n_dim):
     Nsig = h_signal[state].sum()
     Nbkg = h_background[state].sum()
 
-    return Nsig, Nbkg
+    sysUp = 0 if h_sys_up is None else h_sys_up[state].sum()
+    sysDown = 0 if h_sys_down is None else h_sys_down[state].sum()
+
+    return Nsig, Nbkg, sysUp, sysDown
