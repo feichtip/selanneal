@@ -3,14 +3,15 @@ import numpy as np
 from . import annealing
 
 
-def create_axes(data, n_bins, features=None):
+def create_axes(data, n_bins, n_int_axes=0, features=None):
     """
     data: (m, n) array where n is the number of features
     """
     axes = []
-    features = features or [f'feature {i+1}' for i in range(data.shape[1])]
-    lower_edges = np.nanquantile(data, q=0.001, axis=0)
-    upper_edges = np.nanquantile(data, q=0.999, axis=0)
+    n_axes = data.shape[1] - n_int_axes
+    features = features or [f'feature {i+1}' for i in range(n_axes)]
+    lower_edges = np.nanquantile(data[:, :n_axes], q=0.001, axis=0)
+    upper_edges = np.nanquantile(data[:, :n_axes], q=0.999, axis=0)
     for start, stop, feature in zip(lower_edges, upper_edges, features):
         # move upper edge to include integer values (right edge of interval is open)
         if float(stop).is_integer():
@@ -42,7 +43,7 @@ def histogram(data, axes, isSignal, weight=1):
 def iterate(data, isSignal, features=None, weight=1, int_axes=[], h_sys_up=None, h_sys_down=None, new_bins=3, max_iter=20, rtol=1E-4, eval_function=None,  **kwargs):
     # new_bins has to be at least 3 to create new bins
     max_bins = new_bins * 2 + 3
-    new_axes = create_axes(data, max_bins, features)
+    new_axes = create_axes(data, max_bins, len(int_axes), features)
     prev_energy = 0
     for i in range(max_iter):
         axes = new_axes
