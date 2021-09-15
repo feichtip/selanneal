@@ -71,9 +71,14 @@ def get_bin_slice(state, x, y):
 
 
 @nb.njit
-def energy(Nsig, Nbkg, sysUp, sysDown):
+def energy(Nsig, Nbkg, sysUp, sysDown, Nexp, eff_threshold):
     if (Nsig + Nbkg) != 0:
-        return -Nsig / math.sqrt(Nsig + Nbkg + ((sysUp + sysDown) / 2)**2)
+        if Nexp is None and eff_threshold is None:
+            # significance FOM
+            return -Nsig / math.sqrt(Nsig + Nbkg + ((sysUp + sysDown) / 2)**2)
+        else:
+            # purity
+            return -Nsig / (Nsig + Nbkg) * (Nsig / Nexp > eff_threshold)
     else:
         return 0
 
@@ -141,10 +146,10 @@ def bin_coupling(state, x, y, bins, strength):
 
 
 @nb.njit
-def start_anneal(initial_state, h_signal, h_background, h_sys_up, h_sys_down, Nsig, Nbkg, sysUp, sysDown, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
+def start_anneal(initial_state, h_signal, h_background, h_sys_up, h_sys_down, Nsig, Nbkg, sysUp, sysDown, Nexp, eff_threshold, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
     state = initial_state.copy()
 
-    E = energy(Nsig, Nbkg, sysUp, sysDown)
+    E = energy(Nsig, Nbkg, sysUp, sysDown, Nexp, eff_threshold)
     if verbose:
         print('inital temperature:', Tmax)
         print('final temperature:', Tmin)
@@ -189,7 +194,7 @@ def start_anneal(initial_state, h_signal, h_background, h_sys_up, h_sys_down, Ns
             Nbkg += dNbkg
             sysUp += dSysUp
             sysDown += dSysDown
-            E = energy(Nsig, Nbkg, sysUp, sysDown)
+            E = energy(Nsig, Nbkg, sysUp, sysDown, Nexp, eff_threshold)
 
             # calculate delta e
             dE = E - prev_E
@@ -234,7 +239,7 @@ def start_anneal(initial_state, h_signal, h_background, h_sys_up, h_sys_down, Ns
     return best_state, best_energy
 
 
-def run(h_signal, h_background, h_sys_up=None, h_sys_down=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
+def run(h_signal, h_background, h_sys_up=None, h_sys_down=None, Nexp=None, eff_threshold=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
 
     bins = h_signal.shape
     n_dim = len(bins)
@@ -269,6 +274,8 @@ def run(h_signal, h_background, h_sys_up=None, h_sys_down=None, Tmin=0.001, Tmax
                                            Nbkg,
                                            sysUp,
                                            sysDown,
+                                           Nexp,
+                                           eff_threshold,
                                            Tmin,
                                            Tmax,
                                            steps,
@@ -284,7 +291,7 @@ def run(h_signal, h_background, h_sys_up=None, h_sys_down=None, Tmin=0.001, Tmax
 
     # calculate the energy again based on the best state and check if it is consistent
     Nsig, Nbkg, sysUp, sysDown = n_events(h_signal, h_background, h_sys_up, h_sys_down, best_state, mode, n_dim)
-    energy_check = energy(Nsig, Nbkg, sysUp, sysDown)
+    energy_check = energy(Nsig, Nbkg, sysUp, sysDown, Nexp, eff_threshold)
     assert(np.isclose(best_energy, energy_check))
 
     if mode == 'edges':

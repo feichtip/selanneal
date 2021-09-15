@@ -27,6 +27,9 @@ def histogram(data, axes, isSignal, weight=1):
     h_sig = bh.Histogram(*axes, storage=bh.storage.Double())
     h_bkg = bh.Histogram(*axes, storage=bh.storage.Double())
 
+    if not isSignal.dtype == bool:
+        isSignal = isSignal.astype(bool)
+
     if isinstance(weight, int):
         weight_sig = weight
         weight_bkg = weight
@@ -40,7 +43,27 @@ def histogram(data, axes, isSignal, weight=1):
     return h_sig, h_bkg
 
 
-def iterate(data, isSignal, features=None, weight=1, int_axes=[], h_sys_up=None, h_sys_down=None, new_bins=3, max_iter=20, rtol=1E-4, eval_function=None,  **kwargs):
+def roc(data, isSignal, features, weight=1, Nexp=None, roc_points=10, **kwargs):
+    Nsig = (isSignal * weight).sum()
+    Nbkg = (~isSignal * weight).sum()
+
+    efficiency = Nsig / Nexp
+    purity = Nsig / (Nsig + Nbkg)
+
+    efficiencies = np.linspace(efficiency, 0, roc_points)
+    purities = [purity]
+    print(f'initial purity: {purity}, efficiency: {efficiency}')
+    for eff_threshold in efficiencies[1:-1]:
+        print(f'\noptimising for efficiency: {eff_threshold}')
+        _, _, _, best_energy = iterate(data, isSignal, features, weight=weight, Nexp=Nexp, eff_threshold=eff_threshold, **kwargs)
+        purities.append(-best_energy)
+
+    purities.append(1.0)
+
+    return efficiencies, purities
+
+
+def iterate(data, isSignal, features=None, weight=1, int_axes=[], h_sys_up=None, h_sys_down=None, Nexp=None, eff_threshold=None, new_bins=3, min_iter=5, max_iter=20, rtol=1E-4, eval_function=None,  **kwargs):
     # new_bins has to be at least 3 to create new bins
     max_bins = new_bins * 2 + 3
     new_axes = create_axes(data, max_bins, len(int_axes), features)
@@ -48,7 +71,7 @@ def iterate(data, isSignal, features=None, weight=1, int_axes=[], h_sys_up=None,
     for i in range(max_iter):
         axes = new_axes
         h_sig, h_bkg = histogram(data, axes + int_axes, isSignal, weight)
-        best_state, best_energy = annealing.run(h_sig.values(), h_bkg.values(), h_sys_up, h_sys_down, mode='edges', **kwargs)
+        best_state, best_energy = annealing.run(h_sig.values(), h_bkg.values(), h_sys_up, h_sys_down, Nexp, eff_threshold, mode='edges', **kwargs)
         N_sig, N_bkg, sysUp, sysDown = annealing.n_events(h_sig.values(), h_bkg.values(), h_sys_up=h_sys_up, h_sys_down=h_sys_down, state=best_state, mode='edges', n_dim=h_sig.ndim)
 
         printout = f'iteration {i}:  E={best_energy:>10.3f}'
@@ -56,7 +79,7 @@ def iterate(data, isSignal, features=None, weight=1, int_axes=[], h_sys_up=None,
             printout += f' {eval_function(N_sig, N_bkg)}'
         print(printout)
 
-        if abs((best_energy - prev_energy) / best_energy) < rtol:
+        if (abs((best_energy - prev_energy) / best_energy)) < rtol and (i >= (min_iter - 1)):
             break
 
         prev_energy = best_energy
@@ -92,7 +115,10 @@ def iterate(data, isSignal, features=None, weight=1, int_axes=[], h_sys_up=None,
                 bin_edges = np.append(bin_edges, upper_edge)
 
             assert(lb[0] <= ub[1])
-            new_axes.append(bh.axis.Variable(bin_edges, metadata=axis.metadata))
+            try:
+                new_axes.append(bh.axis.Variable(bin_edges, metadata=axis.metadata))
+            except:
+                print(bin_edges)
 
     selection_list = selection(axes + int_axes, best_state)
 
