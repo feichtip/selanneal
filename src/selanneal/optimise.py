@@ -79,14 +79,14 @@ def iterate(data, isSignal, features=None, weight=1, int_axes=[], h_sys_up=None,
             printout += f' {eval_function(N_sig, N_bkg)}'
         print(printout)
 
-        if (abs((best_energy - prev_energy) / best_energy)) < rtol and (i >= (min_iter - 1)):
+        if (best_energy != 0) and abs((best_energy - prev_energy) / best_energy) < rtol and (i >= (min_iter - 1)):
             break
 
         prev_energy = best_energy
         new_axes = []
         for axis, state in zip(axes, best_state):
-            lb = [0] * 2
-            ub = [0] * 2
+            lb = [0] * 2  # lower bound of adjacent bins
+            ub = [0] * 2  # upper bound of adjacent bins
             lower_edge = axis.edges[0]
             upper_edge = axis.edges[axis.size]
             for j in range(2):
@@ -102,7 +102,7 @@ def iterate(data, isSignal, features=None, weight=1, int_axes=[], h_sys_up=None,
                     ub[j] = axis.edges[state[j] + 1] if current_edge != upper_edge else upper_edge
 
             # create new bin edges within the new ranges
-            if ub[0] < lb[1]:
+            if (ub[0] < lb[1]) and not np.isclose(ub[0], lb[1]):
                 bin_edges = np.concatenate((np.linspace(lb[0], ub[0], new_bins + 1), np.linspace(lb[1], ub[1], new_bins + 1)))
             else:
                 # for overlapping or touching bin edges
@@ -115,10 +115,10 @@ def iterate(data, isSignal, features=None, weight=1, int_axes=[], h_sys_up=None,
                 bin_edges = np.append(bin_edges, upper_edge)
 
             assert(lb[0] <= ub[1])
-            try:
-                new_axes.append(bh.axis.Variable(bin_edges, metadata=axis.metadata))
-            except:
-                print(bin_edges)
+            assert(lb[0] < ub[0])
+            assert(lb[1] < ub[1])
+
+            new_axes.append(bh.axis.Variable(bin_edges, metadata=axis.metadata))
 
     selection_list = selection(axes + int_axes, best_state)
 
