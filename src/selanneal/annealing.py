@@ -161,7 +161,7 @@ def bin_coupling(state, x, y, bins, strength):
 def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, cov_matrix, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
     state = initial_state.copy()
 
-    E = energy(Neve, Nexp, eff_threshold)
+    E = energy(Neve, Nexp, eff_threshold, state, cov_matrix, mode)
     if verbose:
         print('inital temperature:', Tmax)
         print('final temperature:', Tmin)
@@ -290,7 +290,7 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
 
     # calculate the energy again based on the best state and check if it is consistent
     Neve = n_events(hists, best_state, mode, n_dim)
-    energy_check = energy(Neve, Nexp, eff_threshold)
+    energy_check = energy(Neve, Nexp, eff_threshold, best_state, cov_matrix, mode)
     assert np.isclose(best_energy, energy_check), f'{best_energy:.4f} <--> {energy_check:.4}'
 
     if mode == 'edges':
