@@ -71,11 +71,12 @@ def get_bin_slice(state, x, y):
 
 
 @nb.njit
-def energy(Nsig, Nbkg, sysUp, sysDown, Nexp, eff_threshold):
+def energy(Neve, Nexp, eff_threshold):
+    Nsig, Nbkg = Neve
     if (Nsig + Nbkg) != 0:
         if Nexp is None and eff_threshold is None:
             # significance FOM
-            return -Nsig / math.sqrt(Nsig + Nbkg + ((sysUp + sysDown) / 2)**2)
+            return -Nsig / math.sqrt(Nsig + Nbkg)
         else:
             # purity
             return -Nsig / (Nsig + Nbkg) * (Nsig / Nexp > eff_threshold)
@@ -146,10 +147,10 @@ def bin_coupling(state, x, y, bins, strength):
 
 
 @nb.njit
-def start_anneal(initial_state, h_signal, h_background, h_sys_up, h_sys_down, Nsig, Nbkg, sysUp, sysDown, Nexp, eff_threshold, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
+def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
     state = initial_state.copy()
 
-    E = energy(Nsig, Nbkg, sysUp, sysDown, Nexp, eff_threshold)
+    E = energy(Neve, Nexp, eff_threshold)
     if verbose:
         print('inital temperature:', Tmax)
         print('final temperature:', Tmin)
@@ -160,10 +161,7 @@ def start_anneal(initial_state, h_signal, h_background, h_sys_up, h_sys_down, Ns
     T = Tmax
 
     prev_E = E
-    prev_Nsig = Nsig
-    prev_Nbkg = Nbkg
-    prev_sysUp = sysUp
-    prev_sysDown = sysDown
+    prev_Neve = Neve.copy()
 
     best_energy = E
     best_state = state.copy()
@@ -184,17 +182,10 @@ def start_anneal(initial_state, h_signal, h_background, h_sys_up, h_sys_down, Ns
                 c = -1
                 sign, sl = get_bin_slice(state, a, b)
 
-            dNsig = sign * h_signal[sl].sum()
-            dNbkg = sign * h_background[sl].sum()
+            dNeve = sign * hists[sl].copy().reshape(-1, hists.shape[-1]).sum(axis=0)  # sum over all except last axis
+            Neve += dNeve
 
-            dSysUp = 0 if h_sys_up is None else sign * h_sys_up[sl].sum()
-            dSysDown = 0 if h_sys_down is None else sign * h_sys_down[sl].sum()
-
-            Nsig += dNsig
-            Nbkg += dNbkg
-            sysUp += dSysUp
-            sysDown += dSysDown
-            E = energy(Nsig, Nbkg, sysUp, sysDown, Nexp, eff_threshold)
+            E = energy(Neve, Nexp, eff_threshold)
 
             # calculate delta e
             dE = E - prev_E
@@ -213,10 +204,7 @@ def start_anneal(initial_state, h_signal, h_background, h_sys_up, h_sys_down, Ns
                     improved += 1
 
                 prev_E = E
-                prev_Nsig = Nsig
-                prev_Nbkg = Nbkg
-                prev_sysUp = sysUp
-                prev_sysDown = sysDown
+                prev_Neve = Neve.copy()
 
                 if E < best_energy:
                     best_state = state.copy()
@@ -224,10 +212,7 @@ def start_anneal(initial_state, h_signal, h_background, h_sys_up, h_sys_down, Ns
             else:
                 # keep previous state
                 E = prev_E
-                Nsig = prev_Nsig
-                Nbkg = prev_Nbkg
-                sysUp = prev_sysUp
-                sysDown = prev_sysDown
+                Neve = prev_Neve.copy()
 
         if (step // print_every) > ((step - 1) // print_every) and verbose:
             print_progress(step / steps, T, E, accepted / print_every / len(meshg[0]), improved / print_every / len(meshg[0]))
@@ -239,16 +224,23 @@ def start_anneal(initial_state, h_signal, h_background, h_sys_up, h_sys_down, Ns
     return best_state, best_energy
 
 
-def run(h_signal, h_background, h_sys_up=None, h_sys_down=None, Nexp=None, eff_threshold=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
+def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_threshold=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
 
-    bins = h_signal.shape
+    if hists is None:
+        if h_signal is None or h_background is None:
+            raise Exception('You need to either pass <h_signal> and <h_background>, or <n_hists> other number of histogrmas as <hists>')
+
+        hists = np.stack([h_signal, h_background], axis=-1)
+
+    if (n_hists == 1) and (hists.shape[-1] != 1):
+        hists = hists[..., np.newaxis]
+
+    assert hists.shape[-1] == n_hists, 'last axis of hists should represent (n_hists) different histograms (e.g. signal and background)'
+    bins = hists.shape[:-1]
+
     n_dim = len(bins)
     if (mode == 'edges') and (len(bins) == 1):
         bins = bins + (0, )  # to have at least 2 dimensions, otherwise doesn't compile for 1d
-
-    assert(n_dim == len(h_background.shape))
-    for i in range(n_dim):
-        assert(h_signal.shape[i] == h_background.shape[i])
 
     if mode == 'bins':
         assert(n_dim == 2)
@@ -264,17 +256,11 @@ def run(h_signal, h_background, h_sys_up=None, h_sys_down=None, Nexp=None, eff_t
     """
     exec(code)
 
-    Nsig, Nbkg, sysUp, sysDown = n_events(h_signal, h_background, h_sys_up, h_sys_down, initial_state, mode, n_dim)
+    Neve = n_events(hists, initial_state, mode, n_dim)
 
     best_state, best_energy = start_anneal(initial_state,
-                                           h_signal,
-                                           h_background,
-                                           h_sys_up,
-                                           h_sys_down,
-                                           Nsig,
-                                           Nbkg,
-                                           sysUp,
-                                           sysDown,
+                                           hists,
+                                           Neve,
                                            Nexp,
                                            eff_threshold,
                                            Tmin,
@@ -291,9 +277,9 @@ def run(h_signal, h_background, h_sys_up=None, h_sys_down=None, Nexp=None, eff_t
         print('\nbest energy:', best_energy)
 
     # calculate the energy again based on the best state and check if it is consistent
-    Nsig, Nbkg, sysUp, sysDown = n_events(h_signal, h_background, h_sys_up, h_sys_down, best_state, mode, n_dim)
-    energy_check = energy(Nsig, Nbkg, sysUp, sysDown, Nexp, eff_threshold)
-    assert(np.isclose(best_energy, energy_check))
+    Neve = n_events(hists, best_state, mode, n_dim)
+    energy_check = energy(Neve, Nexp, eff_threshold)
+    assert np.isclose(best_energy, energy_check), f'{best_energy:.4f} <--> {energy_check:.4}'
 
     if mode == 'edges':
         # returns the index for the bin edges that gives the correct cut value
@@ -302,17 +288,13 @@ def run(h_signal, h_background, h_sys_up=None, h_sys_down=None, Nexp=None, eff_t
     return best_state, best_energy
 
 
-def n_events(h_signal, h_background, h_sys_up, h_sys_down, state, mode, n_dim):
+def n_events(hists, state, mode, n_dim):
     if mode == 'edges':
         sl = ()
         for i in range(n_dim):
             sl += (slice(*state[i]), )
         state = sl
 
-    Nsig = h_signal[state].sum()
-    Nbkg = h_background[state].sum()
+    Neve = hists[state].reshape(-1, hists.shape[-1]).sum(axis=0)  # sum over all except last axis
 
-    sysUp = 0 if h_sys_up is None else h_sys_up[state].sum()
-    sysDown = 0 if h_sys_down is None else h_sys_down[state].sum()
-
-    return Nsig, Nbkg, sysUp, sysDown
+    return Neve
