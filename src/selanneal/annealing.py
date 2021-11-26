@@ -243,7 +243,8 @@ def run(h_signal, h_background, h_sys_up=None, h_sys_down=None, Nexp=None, eff_t
 
     bins = h_signal.shape
     n_dim = len(bins)
-    bins = bins + (0, )  # to have at least 2 dimensions, otherwise doesn't compile for 1d
+    if (mode == 'edges') and (len(bins) == 1):
+        bins = bins + (0, )  # to have at least 2 dimensions, otherwise doesn't compile for 1d
 
     assert(n_dim == len(h_background.shape))
     for i in range(n_dim):

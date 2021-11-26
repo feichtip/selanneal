@@ -137,7 +137,7 @@ def roc(data, isSignal, features, weight=1, int_axes=[], Nexp=None, roc_points=2
             # print('purity', purity, -best_energy)
             # print('efficiency', efficiency, eff_threshold)
 
-        assert (purity == -best_energy), f'{purity} <--> {-best_energy}'
+        assert np.isclose(purity, -best_energy), f'{purity} <--> {-best_energy}'
         assert (efficiency > eff_threshold), f'{efficiency} <--> {eff_threshold}'
 
         purities.append(purity)
