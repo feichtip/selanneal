@@ -71,17 +71,28 @@ def get_bin_slice(state, x, y):
 
 
 @nb.njit
-def energy(Neve, Nexp, eff_threshold):
-    Nsig, Nbkg = Neve
-    if (Nsig + Nbkg) != 0:
-        if Nexp is None and eff_threshold is None:
-            # significance FOM
-            return -Nsig / math.sqrt(Nsig + Nbkg)
-        else:
-            # purity
-            return -Nsig / (Nsig + Nbkg) * (Nsig / Nexp > eff_threshold)
+def energy(Neve, Nexp, eff_threshold, state, cov_matrix, mode):
+    if (mode == 'bins') and (cov_matrix is not None):
+        """
+        joining rows of state grid for covarince matrix
+        for specific problem, modify here if needed
+        """
+        Nsig_1, Nbkg_1, Nsig_2, Nbkg_2 = Neve
+        stat_error = (Nsig_1 + Nbkg_1) / Nsig_1**2 + (Nsig_2 + Nbkg_2) / Nbkg_2**2
+        cov_mask = state.flatten()[np.newaxis].T @ state.flatten()[np.newaxis]
+        sys_error = np.nansum(cov_matrix[cov_mask]) / (~np.isnan(cov_matrix[cov_mask])).sum()
+        return stat_error + sys_error  # variance, still need to take square root
     else:
-        return 0
+        Nsig, Nbkg = Neve
+        if (Nsig + Nbkg) != 0:
+            if Nexp is None and eff_threshold is None:
+                # significance FOM
+                return -Nsig / math.sqrt(Nsig + Nbkg)
+            else:
+                # purity
+                return -Nsig / (Nsig + Nbkg) * (Nsig / Nexp > eff_threshold)
+        else:
+            return 0
 
 
 @nb.jit
@@ -147,7 +158,7 @@ def bin_coupling(state, x, y, bins, strength):
 
 
 @nb.njit
-def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
+def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, cov_matrix, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
     state = initial_state.copy()
 
     E = energy(Neve, Nexp, eff_threshold)
@@ -185,7 +196,7 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, Tmin, Tmax, st
             dNeve = sign * hists[sl].copy().reshape(-1, hists.shape[-1]).sum(axis=0)  # sum over all except last axis
             Neve += dNeve
 
-            E = energy(Neve, Nexp, eff_threshold)
+            E = energy(Neve, Nexp, eff_threshold, state, cov_matrix, mode)
 
             # calculate delta e
             dE = E - prev_E
@@ -224,7 +235,7 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, Tmin, Tmax, st
     return best_state, best_energy
 
 
-def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_threshold=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
+def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_threshold=None, cov_matrix=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
 
     if hists is None:
         if h_signal is None or h_background is None:
@@ -263,6 +274,7 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
                                            Neve,
                                            Nexp,
                                            eff_threshold,
+                                           cov_matrix,
                                            Tmin,
                                            Tmax,
                                            steps,
