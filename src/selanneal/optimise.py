@@ -157,7 +157,7 @@ def roc(data, isSignal, features, weight=1, int_axes=[], Nexp=None, roc_points=2
     return selections, efficiencies, purities
 
 
-def iterate(data, isSignal, features=None, weight=1, int_axes=[], h_sys_up=None, h_sys_down=None, Nexp=None, eff_threshold=None, new_bins=3, min_iter=5, max_iter=20, rtol=1E-4, eval_function=None, quantile=0.001, precision=4, roundDownUp=False, verbosity=1, **kwargs):
+def iterate(data, isSignal, features=None, weight=1, int_axes=[], Nexp=None, eff_threshold=None, new_bins=3, min_iter=5, max_iter=20, rtol=1E-4, eval_function=None, quantile=0.001, precision=4, roundDownUp=False, verbosity=1, **kwargs):
     # new_bins has to be at least 3 to create new bins
     max_bins = new_bins * 2 + 3
     new_axes = create_axes(data, max_bins, len(int_axes), features, quantile=quantile)
@@ -165,8 +165,14 @@ def iterate(data, isSignal, features=None, weight=1, int_axes=[], h_sys_up=None,
     for i in range(max_iter):
         axes = new_axes
         h_sig, h_bkg = histogram(data, axes + int_axes, isSignal, weight)
-        best_state, best_energy = annealing.run(h_sig.values(), h_bkg.values(), h_sys_up, h_sys_down, Nexp, eff_threshold, mode='edges', **kwargs)
-        N_sig, N_bkg, sysUp, sysDown = annealing.n_events(h_sig.values(), h_bkg.values(), h_sys_up=h_sys_up, h_sys_down=h_sys_down, state=best_state, mode='edges', n_dim=h_sig.ndim)
+        hists = np.stack([h_sig.values(), h_bkg.values()], axis=-1)
+        best_state, best_energy = annealing.run(hists=hists,
+                                                n_hists=2,
+                                                Nexp=Nexp,
+                                                eff_threshold=eff_threshold,
+                                                mode='edges',
+                                                **kwargs)
+        N_sig, N_bkg = annealing.n_events(hists, state=best_state, mode='edges', n_dim=h_sig.ndim)
 
         if verbosity > 0:
             printout = f'iteration {i}:  E={best_energy:>10.3f}'

@@ -230,7 +230,7 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
         if h_signal is None or h_background is None:
             raise Exception('You need to either pass <h_signal> and <h_background>, or <n_hists> other number of histogrmas as <hists>')
 
-        hists = np.concatenate([h_signal[..., np.newaxis], h_background[..., np.newaxis]], axis=-1)
+        hists = np.stack([h_signal, h_background], axis=-1)
 
     if (n_hists == 1) and (hists.shape[-1] != 1):
         hists = hists[..., np.newaxis]
