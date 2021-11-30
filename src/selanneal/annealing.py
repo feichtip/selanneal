@@ -292,7 +292,7 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
         meshg = np.meshgrid(range(initial_state.shape[0]), range(initial_state.shape[1]))
         meshg = (meshg[0].flatten(), meshg[1].flatten())
         if cov_matrix is not None:
-            sparse_positions = (~np.isnan(cov_matrix)).sum(axis=0) > 0
+            sparse_positions = ~np.isnan(np.diag(cov_matrix))
             sparse_indices = np.where(sparse_positions)[0]
             sparse_data = cov_matrix[~np.isnan(cov_matrix) & np.tril(np.ones_like(cov_matrix)).astype(bool)]
             assert sparse_positions.sum() == (-1 / 2 + np.sqrt(1 / 4 + len(sparse_data) * 2))
