@@ -71,7 +71,7 @@ def get_bin_slice(state, x, y):
 
 
 @nb.njit
-def energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data):
+def energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights):
     if sparse_data is not None:
         """
         joining rows of state grid for covarince matrix
@@ -83,27 +83,30 @@ def energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data):
         stat_error = (Nsig_1 + Nbkg_1) / Nsig_1**2 + (Nsig_2 + Nbkg_2) / Nsig_2**2
 
         states = state.flatten()
+        assert len(cov_weights) == len(states)
+
         # nan_states = (states & ~sparse_positions).sum()
         # sparse_indices = np.where(sparse_positions)[0]
 
         sum = 0
         not_nan = 0
         data_idx = 0
+        weight_sum = 0
         for i in sparse_indices:
             for j in sparse_indices:
                 if j > i:
                     break
-                entry = sparse_data[data_idx]
                 if states[i] and states[j]:
                     multiplicity = 1 + int(i != j)
-                    sum += multiplicity * entry
+                    entry = sparse_data[data_idx]
+                    weight = multiplicity * cov_weights[i] * cov_weights[j]
+                    sum += entry * weight
+                    weight_sum += weight
                     not_nan += multiplicity
                 data_idx += 1
 
-        # assert not_nan == (states.sum() - nan_states)**2
         nan_states = states.sum() - np.sqrt(not_nan)  # penalty term
-
-        sys_error = sum / not_nan
+        sys_error = sum / weight_sum
         return np.sqrt(stat_error + sys_error) * 100 + nan_states
     else:
         Nsig, Nbkg = Neve
@@ -184,10 +187,10 @@ def bin_coupling(state, x, y, bins, strength):
 
 
 @nb.njit
-def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices, sparse_data, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
+def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices, sparse_data, cov_weights, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
     state = initial_state.copy()
 
-    E = energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data)
+    E = energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights)
     if verbose:
         print('inital temperature:', Tmax)
         print('final temperature:', Tmin)
@@ -223,7 +226,7 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices
             dNeve = sign * hists[sl].copy().reshape(-1, hists.shape[-1]).sum(axis=0)  # sum over all except last axis
             Neve += dNeve
 
-            E = energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data)
+            E = energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights)
 
             # calculate delta e
             dE = E - prev_E
@@ -265,7 +268,7 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices
     return best_state, best_energy
 
 
-def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_threshold=None, cov_matrix=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
+def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_threshold=None, cov_matrix=None, cov_weights=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
 
     if hists is None:
         if h_signal is None or h_background is None:
@@ -315,6 +318,7 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
                                            eff_threshold,
                                            sparse_indices,
                                            sparse_data,
+                                           cov_weights,
                                            Tmin,
                                            Tmax,
                                            steps,
@@ -330,7 +334,7 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
 
     # calculate the energy again based on the best state and check if it is consistent
     Neve = n_events(hists, best_state, mode, n_dim)
-    energy_check = energy(Neve, Nexp, eff_threshold, best_state, sparse_indices, sparse_data)
+    energy_check = energy(Neve, Nexp, eff_threshold, best_state, sparse_indices, sparse_data, cov_weights)
     assert np.isclose(best_energy, energy_check), f'{best_energy:.4f} <--> {energy_check:.4}'
 
     if mode == 'edges':
