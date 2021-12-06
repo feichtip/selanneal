@@ -77,10 +77,25 @@ def energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_we
         joining rows of state grid for covarince matrix
         for specific problem, modify here if needed
         """
-        Nsig_1, Nbkg_1, Nsig_2, Nbkg_2 = Neve
+        Nsig_1 = Neve[0]
+        Nbkg_1 = Neve[1]
+        Nsig_2 = Neve[2]
+        Nbkg_2 = Neve[3]
+
         if Nsig_1 == 0 or Nsig_2 == 0:
             return 100
         stat_error = (Nsig_1 + Nbkg_1) / Nsig_1**2 + (Nsig_2 + Nbkg_2) / Nsig_2**2
+
+        N_sigs_1 = Neve[4::4]
+        N_bkgs_1 = Neve[5::4]
+        N_sigs_2 = Neve[6::4]
+        N_bkgs_2 = Neve[7::4]
+
+        numerator = (Nsig_1 + Nbkg_1 - N_bkgs_1) / N_sigs_1
+        denominator = (Nsig_2 + Nbkg_2 - N_bkgs_2) / N_sigs_2
+        ratio = numerator / denominator
+        variance = ((ratio - ratio.mean())**2).sum() / (len(ratio) - 1)
+        # return np.sqrt(stat_error + variance) * 100
 
         states = state.flatten()
         assert len(cov_weights) == len(states)
@@ -107,7 +122,8 @@ def energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_we
 
         nan_states = states.sum() - np.sqrt(not_nan)  # penalty term
         sys_error = sum / weight_sum
-        return np.sqrt(stat_error + sys_error) * 100 + nan_states
+        # return np.sqrt(stat_error + sys_error) * 100 + nan_states
+        return np.sqrt(stat_error + (0.1 * sys_error + 0.9 * variance)) * 100 + nan_states
     else:
         Nsig, Nbkg = Neve
         if (Nsig + Nbkg) != 0:
@@ -151,14 +167,14 @@ def count_digits(m):
 
 
 @nb.njit
-def print_progress(progress,  T, E, accept, improve):
+def print_progress(step, steps,  T, E, accept, improve):
     space = ' '
-    progress_r = round_digits(progress, 4)
+    progress_r = round_digits((step + 1) / steps, 3)
     T_r = round_digits(T, 4)
     E_r = round_digits(E, 4)
     accept_r = round_digits(accept, 3)
     improve_r = round_digits(improve, 3)
-    if progress == 0:
+    if step == 0:
         print('\n progress     temperature     energy     acceptance     improvement')
         print('--------------------------------------------------------------------')
     else:
@@ -208,7 +224,8 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices
 
     accepted = 0
     improved = 0
-    print_every = int(steps / 50)
+    n_prints = 50
+    print_every = int(steps / n_prints)
 
     for step in range(steps):
         for a, b in zip(*meshg):
@@ -258,12 +275,25 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices
                 E = prev_E
                 Neve = prev_Neve.copy()
 
-        if (step // print_every) > ((step - 1) // print_every) and verbose:
-            print_progress(step / steps, T, E, accepted / print_every / len(meshg[0]), improved / print_every / len(meshg[0]))
+        if (step == 0) and (accepted / len(meshg[0]) < 0.9):
+            accepted_r = round_digits(accepted / len(meshg[0]), 3) * 100
+            print('Only', accepted_r, '% of new states were accepted in the first iteration. Consider to increase the maximum temperature.')
+
+        if (step // print_every) > ((step - 1) // print_every):
+            if verbose:
+                # for step==0: prints only header
+                print_progress(step, steps, T, E, accepted / print_every / len(meshg[0]), improved / print_every / len(meshg[0]))
             accepted = 0
             improved = 0
 
         T *= T_scaling
+
+    norm = (steps - 1) % print_every
+    if verbose:  # for last step
+        print_progress(step, steps, T, E, accepted / norm / len(meshg[0]), improved / norm / len(meshg[0]))
+    if (improved / norm / len(meshg[0]) > 0.01):
+        improved_r = round_digits(improved / norm / len(meshg[0]), 3) * 100
+        print('Still', improved_r, '% of new states improved in the last iteration. Consider to decrease the minimum temperature.')
 
     return best_state, best_energy
 
