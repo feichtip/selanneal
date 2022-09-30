@@ -1,7 +1,8 @@
-import numpy as np
-import random
 import math
+import random
+
 import numba as nb
+import numpy as np
 
 
 @nb.njit
@@ -186,15 +187,22 @@ def print_progress(step, steps,  T, E, accept, improve):
 
 
 @nb.njit
-def bin_coupling(state, x, y, bins, strength):
+def bin_coupling(state, x, y, bins, strength, moore=True):
     """
     return bin coupling difference: -(new state - old state)
     """
-    not_border_x = np.array([x != 0, x != 0, x != 0, True, x != (bins[0] - 1), x != (bins[0] - 1), x != (bins[0] - 1), True])
-    not_border_y = np.array([True, y != 0, y != (bins[1] - 1), y != 0, True, y != 0, y != (bins[1] - 1), y != (bins[1] - 1)])
+    if moore:
+        not_border_x = np.array([x != 0, x != 0, x != 0, True, x != (bins[0] - 1), x != (bins[0] - 1), x != (bins[0] - 1), True])
+        not_border_y = np.array([True, y != 0, y != (bins[1] - 1), y != 0, True, y != 0, y != (bins[1] - 1), y != (bins[1] - 1)])
 
-    x_not_border = (x + np.array([-1, -1, -1, 0, 1, 1, 1, 0]))[not_border_x & not_border_y]
-    y_not_border = (y + np.array([0, -1, 1, -1, 0, -1, 1, 1]))[not_border_x & not_border_y]
+        x_not_border = (x + np.array([-1, -1, -1, 0, 1, 1, 1, 0]))[not_border_x & not_border_y]
+        y_not_border = (y + np.array([0, -1, 1, -1, 0, -1, 1, 1]))[not_border_x & not_border_y]
+    else:
+        not_border_x = np.array([x != 0, True, x != (bins[0] - 1), True])
+        not_border_y = np.array([True, y != 0, True, y != (bins[1] - 1)])
+
+        x_not_border = (x + np.array([-1, 0, 1, 0]))[not_border_x & not_border_y]
+        y_not_border = (y + np.array([0, -1, 0, 1]))[not_border_x & not_border_y]
 
     # same_state = state[x_not_border, y_not_border] == state[x, y] # does not work with numba
     same_state = np.asarray([state[a, b] for a, b in zip(x_not_border, y_not_border)]) == state[x, y]
@@ -203,7 +211,7 @@ def bin_coupling(state, x, y, bins, strength):
 
 
 @nb.njit
-def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices, sparse_data, cov_weights, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
+def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices, sparse_data, cov_weights, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, moore, verbose):
     state = initial_state.copy()
 
     E = energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights)
@@ -250,7 +258,7 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices
 
             # add coupling to delta E
             if (mode == 'bins') and (coupling != 0):
-                dE += bin_coupling(state, a, b, bins, coupling)
+                dE += bin_coupling(state, a, b, bins, coupling, moore=moore)
 
             # always accept if dE < 0
             if dE < 0 or math.exp(-dE / T) > random.random():
@@ -298,7 +306,7 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices
     return best_state, best_energy
 
 
-def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_threshold=None, cov_matrix=None, cov_weights=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
+def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_threshold=None, cov_matrix=None, cov_weights=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, moore=True, verbose=True, mode='bins'):
 
     if hists is None:
         if h_signal is None or h_background is None:
@@ -357,6 +365,7 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
                                            n_dim,
                                            coupling,
                                            mode,
+                                           moore,
                                            verbose)
 
     if verbose:
