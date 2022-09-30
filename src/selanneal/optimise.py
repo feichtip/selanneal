@@ -1,7 +1,9 @@
-import boost_histogram as bh
-import numpy as np
 import itertools
 import math
+
+import boost_histogram as bh
+import numpy as np
+
 from . import annealing
 
 
@@ -45,7 +47,7 @@ def histogram(data, axes, isSignal, weight=1):
     return h_sig, h_bkg
 
 
-def roc(data, isSignal, features, weight=1, int_axes=[], Nexp=None, roc_points=25, feat_per_rotation=7, init_feat_weights=None, **kwargs):
+def roc(data, isSignal, features, weight=1, int_axes=[], Nexp=None, roc_points=25, feat_per_rotation=7, init_feat_weights=None, final_eff=0, **kwargs):
     verbosity = kwargs.get('verbosity')
     verbosity = 1 if verbosity is None else verbosity
 
@@ -70,7 +72,7 @@ def roc(data, isSignal, features, weight=1, int_axes=[], Nexp=None, roc_points=2
     selected_isSignal = isSignal.copy()
     selected_weight = weight.copy()
 
-    eff_thresholds = np.linspace(efficiency, 0, roc_points)[1: -1]  # without first and last point
+    eff_thresholds = np.linspace(efficiency, final_eff, roc_points)[1: -1]  # without first and last point
     efficiencies = [efficiency]
     purities = [purity]
 
@@ -129,8 +131,8 @@ def roc(data, isSignal, features, weight=1, int_axes=[], Nexp=None, roc_points=2
         efficiency = Nsig / Nexp
         purity = Nsig / (Nsig + Nbkg)
 
-        if verbosity > 0:
-            print(pd_selections)
+        if verbosity > 1:
+            print('current selection:', pd_selections)
             # print(selected_features + [int_axis.metadata for int_axis in selected_int_axes])
             # print(np_selection)
             # print(axes)
@@ -150,6 +152,9 @@ def roc(data, isSignal, features, weight=1, int_axes=[], Nexp=None, roc_points=2
             selection_list[idx] = [pd_selection]
         selections.append(list(itertools.chain(*selection_list)))
 
+        if verbosity > 0:
+            print(selection_list)
+
     purities.append(1.0)
     efficiencies.append(0.0)
     selections.append(None)
@@ -159,6 +164,9 @@ def roc(data, isSignal, features, weight=1, int_axes=[], Nexp=None, roc_points=2
 
 def iterate(data, isSignal, features=None, weight=1, int_axes=[], Nexp=None, eff_threshold=None, new_bins=3, min_iter=5, max_iter=20, rtol=1E-4, eval_function=None, quantile=0.001, precision=4, roundDownUp=False, verbosity=1, **kwargs):
     # new_bins has to be at least 3 to create new bins
+    if verbosity > 1:
+        kwargs['verbose'] = True
+
     max_bins = new_bins * 2 + 3
     new_axes = create_axes(data, max_bins, len(int_axes), features, quantile=quantile)
     prev_energy = 0

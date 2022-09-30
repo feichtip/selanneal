@@ -1,7 +1,8 @@
-import numpy as np
-import random
 import math
+import random
+
 import numba as nb
+import numpy as np
 
 
 @nb.njit
@@ -71,17 +72,70 @@ def get_bin_slice(state, x, y):
 
 
 @nb.njit
-def energy(Neve, Nexp, eff_threshold):
-    Nsig, Nbkg = Neve
-    if (Nsig + Nbkg) != 0:
-        if Nexp is None and eff_threshold is None:
-            # significance FOM
-            return -Nsig / math.sqrt(Nsig + Nbkg)
-        else:
-            # purity
-            return -Nsig / (Nsig + Nbkg) * (Nsig / Nexp > eff_threshold)
+def energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights):
+    if sparse_data is not None:
+        """
+        joining rows of state grid for covarince matrix
+        for specific problem, modify here if needed
+        """
+        Nsig_1 = Neve[0]
+        Nbkg_1 = Neve[1]
+        Nsig_2 = Neve[2]
+        Nbkg_2 = Neve[3]
+
+        if Nsig_1 == 0 or Nsig_2 == 0:
+            return 100
+        stat_error = (Nsig_1 + Nbkg_1) / Nsig_1**2 + (Nsig_2 + Nbkg_2) / Nsig_2**2
+
+        N_sigs_1 = Neve[4::4]
+        N_bkgs_1 = Neve[5::4]
+        N_sigs_2 = Neve[6::4]
+        N_bkgs_2 = Neve[7::4]
+
+        numerator = (Nsig_1 + Nbkg_1 - N_bkgs_1) / N_sigs_1
+        denominator = (Nsig_2 + Nbkg_2 - N_bkgs_2) / N_sigs_2
+        ratio = numerator / denominator
+        variance = ((ratio - ratio.mean())**2).sum() / (len(ratio) - 1)
+        # return np.sqrt(stat_error + variance) * 100
+
+        states = state.flatten()
+        assert len(cov_weights) == len(states)
+
+        # nan_states = (states & ~sparse_positions).sum()
+        # sparse_indices = np.where(sparse_positions)[0]
+
+        sum = 0
+        not_nan = 0
+        data_idx = 0
+        weight_sum = 0
+        for i in sparse_indices:
+            for j in sparse_indices:
+                if j > i:
+                    break
+                if states[i] and states[j]:
+                    multiplicity = 1 + int(i != j)
+                    entry = sparse_data[data_idx]
+                    weight = multiplicity * cov_weights[i] * cov_weights[j]
+                    sum += entry * weight
+                    weight_sum += weight
+                    not_nan += multiplicity
+                data_idx += 1
+
+        nan_states = states.sum() - np.sqrt(not_nan)  # penalty term
+        sys_error = sum / weight_sum
+        # return np.sqrt(stat_error + sys_error) * 100 + nan_states
+        return np.sqrt(stat_error + (0.1 * sys_error + 0.9 * variance)) * 100 + nan_states
     else:
-        return 0
+        Nsig, Nbkg = Neve
+        if (Nsig + Nbkg) != 0:
+            if Nexp is None and eff_threshold is None:
+                # significance FOM
+                return -Nsig / math.sqrt(Nsig + Nbkg)
+            else:
+                # purity
+                return -Nsig / (Nsig + Nbkg) * (Nsig / Nexp > eff_threshold)
+        else:
+            return 0
 
 
 @nb.jit
@@ -114,14 +168,14 @@ def count_digits(m):
 
 
 @nb.njit
-def print_progress(progress,  T, E, accept, improve):
+def print_progress(step, steps,  T, E, accept, improve):
     space = ' '
-    progress_r = round_digits(progress, 4)
+    progress_r = round_digits((step + 1) / steps, 3)
     T_r = round_digits(T, 4)
     E_r = round_digits(E, 4)
     accept_r = round_digits(accept, 3)
     improve_r = round_digits(improve, 3)
-    if progress == 0:
+    if step == 0:
         print('\n progress     temperature     energy     acceptance     improvement')
         print('--------------------------------------------------------------------')
     else:
@@ -133,24 +187,34 @@ def print_progress(progress,  T, E, accept, improve):
 
 
 @nb.njit
-def bin_coupling(state, x, y, bins, strength):
-    not_border_x = np.array([x != 0, x != 0, x != 0, True, x != (bins[0] - 1), x != (bins[0] - 1), x != (bins[0] - 1), True])
-    not_border_y = np.array([True, y != 0, y != (bins[1] - 1), y != 0, True, y != 0, y != (bins[1] - 1), y != (bins[1] - 1)])
+def bin_coupling(state, x, y, bins, strength, moore=True):
+    """
+    return bin coupling difference: -(new state - old state)
+    """
+    if moore:
+        not_border_x = np.array([x != 0, x != 0, x != 0, True, x != (bins[0] - 1), x != (bins[0] - 1), x != (bins[0] - 1), True])
+        not_border_y = np.array([True, y != 0, y != (bins[1] - 1), y != 0, True, y != 0, y != (bins[1] - 1), y != (bins[1] - 1)])
 
-    x_not_border = (x + np.array([-1, -1, -1, 0, 1, 1, 1, 0]))[not_border_x & not_border_y]
-    y_not_border = (y + np.array([0, -1, 1, -1, 0, -1, 1, 1]))[not_border_x & not_border_y]
+        x_not_border = (x + np.array([-1, -1, -1, 0, 1, 1, 1, 0]))[not_border_x & not_border_y]
+        y_not_border = (y + np.array([0, -1, 1, -1, 0, -1, 1, 1]))[not_border_x & not_border_y]
+    else:
+        not_border_x = np.array([x != 0, True, x != (bins[0] - 1), True])
+        not_border_y = np.array([True, y != 0, True, y != (bins[1] - 1)])
+
+        x_not_border = (x + np.array([-1, 0, 1, 0]))[not_border_x & not_border_y]
+        y_not_border = (y + np.array([0, -1, 0, 1]))[not_border_x & not_border_y]
 
     # same_state = state[x_not_border, y_not_border] == state[x, y] # does not work with numba
     same_state = np.asarray([state[a, b] for a, b in zip(x_not_border, y_not_border)]) == state[x, y]
 
-    return strength * (same_state.sum() - (~same_state).sum())
+    return -strength * (same_state.sum() - (~same_state).sum())
 
 
 @nb.njit
-def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, verbose):
+def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices, sparse_data, cov_weights, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, moore, verbose):
     state = initial_state.copy()
 
-    E = energy(Neve, Nexp, eff_threshold)
+    E = energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights)
     if verbose:
         print('inital temperature:', Tmax)
         print('final temperature:', Tmin)
@@ -168,7 +232,8 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, Tmin, Tmax, st
 
     accepted = 0
     improved = 0
-    print_every = int(steps / 50)
+    n_prints = 50
+    print_every = int(steps / n_prints)
 
     for step in range(steps):
         for a, b in zip(*meshg):
@@ -178,26 +243,26 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, Tmin, Tmax, st
                     a, b, c = choose_state(n_dim)
                     valid = valid_state(state, bins, a, b, c)
                 sign, sl = get_edge_slice(state, a, b, c)
+                state[a, b] = state[a, b] + c  # new state
             elif mode == 'bins':
-                c = -1
                 sign, sl = get_bin_slice(state, a, b)
+                state[a, b] = ~state[a, b]  # new state
 
             dNeve = sign * hists[sl].copy().reshape(-1, hists.shape[-1]).sum(axis=0)  # sum over all except last axis
             Neve += dNeve
 
-            E = energy(Neve, Nexp, eff_threshold)
+            E = energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights)
 
             # calculate delta e
             dE = E - prev_E
 
             # add coupling to delta E
             if (mode == 'bins') and (coupling != 0):
-                dE += bin_coupling(state, a, b, bins, coupling)
+                dE += bin_coupling(state, a, b, bins, coupling, moore=moore)
 
             # always accept if dE < 0
             if dE < 0 or math.exp(-dE / T) > random.random():
                 # accept new state
-                state[a, b] = abs(state[a, b] + c)
 
                 accepted += 1
                 if dE < 0.0:
@@ -210,21 +275,38 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, Tmin, Tmax, st
                     best_state = state.copy()
                     best_energy = E
             else:
-                # keep previous state
+                # revert to previous state
+                if mode == 'edges':
+                    state[a, b] = state[a, b] - c
+                elif mode == 'bins':
+                    state[a, b] = ~state[a, b]
                 E = prev_E
                 Neve = prev_Neve.copy()
 
-        if (step // print_every) > ((step - 1) // print_every) and verbose:
-            print_progress(step / steps, T, E, accepted / print_every / len(meshg[0]), improved / print_every / len(meshg[0]))
+        if (step == 0) and (accepted / len(meshg[0]) < 0.9):
+            accepted_r = round_digits(accepted / len(meshg[0]), 3) * 100
+            print('Only', accepted_r, '% of new states were accepted in the first iteration. Consider to increase the maximum temperature.')
+
+        if (step // print_every) > ((step - 1) // print_every):
+            if verbose:
+                # for step==0: prints only header
+                print_progress(step, steps, T, E, accepted / print_every / len(meshg[0]), improved / print_every / len(meshg[0]))
             accepted = 0
             improved = 0
 
         T *= T_scaling
 
+    norm = (steps - 1) % print_every
+    if verbose:  # for last step
+        print_progress(step, steps, T, E, accepted / norm / len(meshg[0]), improved / norm / len(meshg[0]))
+    if (improved / norm / len(meshg[0]) > 0.01):
+        improved_r = round_digits(improved / norm / len(meshg[0]), 3) * 100
+        print('Still', improved_r, '% of new states improved in the last iteration. Consider to decrease the minimum temperature.')
+
     return best_state, best_energy
 
 
-def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_threshold=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, verbose=True, mode='bins'):
+def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_threshold=None, cov_matrix=None, cov_weights=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, moore=True, verbose=True, mode='bins'):
 
     if hists is None:
         if h_signal is None or h_background is None:
@@ -242,11 +324,20 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
     if (mode == 'edges') and (len(bins) == 1):
         bins = bins + (0, )  # to have at least 2 dimensions, otherwise doesn't compile for 1d
 
+    sparse_indices = None
+    sparse_data = None
+
     if mode == 'bins':
         assert(n_dim == 2)
         initial_state = np.random.randint(0, 2, size=bins, dtype='bool')
         meshg = np.meshgrid(range(initial_state.shape[0]), range(initial_state.shape[1]))
         meshg = (meshg[0].flatten(), meshg[1].flatten())
+        if cov_matrix is not None:
+            sparse_positions = ~np.isnan(np.diag(cov_matrix))
+            sparse_indices = np.where(sparse_positions)[0]
+            sparse_data = cov_matrix[~np.isnan(cov_matrix) & np.tril(np.ones_like(cov_matrix)).astype(bool)]
+            assert sparse_positions.sum() == (-1 / 2 + np.sqrt(1 / 4 + len(sparse_data) * 2))
+            assert (~np.isnan(cov_matrix)).sum() == (1 / 2 + len(sparse_data) * 2 - np.sqrt(1 / 4 + len(sparse_data) * 2))
     elif mode == 'edges':
         initial_state = np.array([[0, bins[i]] for i in range(n_dim)], dtype='int')
         meshg = ([0], [0])
@@ -263,6 +354,9 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
                                            Neve,
                                            Nexp,
                                            eff_threshold,
+                                           sparse_indices,
+                                           sparse_data,
+                                           cov_weights,
                                            Tmin,
                                            Tmax,
                                            steps,
@@ -271,6 +365,7 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
                                            n_dim,
                                            coupling,
                                            mode,
+                                           moore,
                                            verbose)
 
     if verbose:
@@ -278,7 +373,7 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
 
     # calculate the energy again based on the best state and check if it is consistent
     Neve = n_events(hists, best_state, mode, n_dim)
-    energy_check = energy(Neve, Nexp, eff_threshold)
+    energy_check = energy(Neve, Nexp, eff_threshold, best_state, sparse_indices, sparse_data, cov_weights)
     assert np.isclose(best_energy, energy_check), f'{best_energy:.4f} <--> {energy_check:.4}'
 
     if mode == 'edges':
