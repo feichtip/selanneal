@@ -1,3 +1,4 @@
+import concurrent.futures
 import itertools
 import math
 
@@ -7,7 +8,7 @@ import numpy as np
 from . import annealing
 
 
-def create_axes(data, n_bins, n_int_axes=0, features=None, quantile=0.001):
+def create_axes(data, n_bins, n_int_axes=0, features=None, quantile=1E-4):
     """
     data: (m, n) array where n is the number of features
     """
@@ -162,7 +163,113 @@ def roc(data, isSignal, features, weight=1, int_axes=[], Nexp=None, roc_points=2
     return selections, efficiencies, purities
 
 
-def iterate(data, isSignal, features=None, weight=1, int_axes=[], Nexp=None, eff_threshold=None, new_bins=3, min_iter=5, max_iter=20, rtol=1E-4, eval_function=None, quantile=0.001, precision=4, roundDownUp=False, verbosity=1, **kwargs):
+def evolution_wrap(selected_data, selected_features, selected_int_axes, isSignal, weight, kwargs):
+    # turn off all prints during iterating/annealing, otherwise it's a mess
+    kwargs['verbose'] = False
+    kwargs['verbosity'] = 0
+
+    pd_selections, axes, best_state, best_energy = iterate(selected_data,
+                                                           isSignal,
+                                                           selected_features,
+                                                           weight=weight,
+                                                           int_axes=selected_int_axes,
+                                                           **kwargs)
+    return best_energy, pd_selections
+
+
+def genetic(data, isSignal, features, weight=1, int_axes=[], n_sel_feat=6, verbose=False,
+            n_gen=10, n_pop=40, n_best=20, mutate_prob=0.3, multiprocess=True, chunksize=2, **kwargs):
+
+    # n_gen = 10  # how many generations to run
+    # n_pop = 40  # how large is the overall population
+    # n_best = 20  # number of best individuals to use for crossover
+    # mutate_prob = 0.3  # probability of an offspring mutation
+    # multiprocess = True
+    # chunksize = 2  # chunksize for multiprocessing
+
+    n_feat = len(features)  # number of features
+    n_dim = n_feat + len(int_axes)
+
+    population = {}
+    population_list = None
+
+    energies = []
+
+    for gen in range(n_gen):
+
+        pop_slice_data = []
+        pop_features = []
+        pop_int_axes = []
+        pop_data = []
+
+        for pop in range(n_pop):
+            if gen == 0:
+                # sample indices for random features
+                slice_data = np.random.choice(range(n_dim), size=n_sel_feat, replace=False)
+            else:
+                # generate offspring from 2 random parents
+                choose_from = list(range(len(population_list))) if (len(population_list) < n_best) else list(range(n_best))
+                parent1 = list(population_list[np.random.choice(choose_from)][0])
+                parent2 = list(population_list[np.random.choice(choose_from)][0])
+                slice_data = np.random.choice(list(set(parent1 + parent2)), size=n_sel_feat, replace=False)
+
+                # add random mutation
+                if np.random.random() < mutate_prob:
+                    mutation = np.random.choice([i for i in range(n_dim) if i not in slice_data])
+                    mutated_slice = set(list(slice_data) + [mutation])
+                    slice_data = np.random.choice(list(mutated_slice), size=n_sel_feat, replace=False)
+
+            slice_data = np.sort(slice_data)
+
+            slice_features = slice_data[slice_data < n_feat]
+            slice_int_axes = slice_data[slice_data >= n_feat] - n_feat
+
+            selected_features = [features[i] for i in slice_features]
+            selected_int_axes = [int_axes[i] for i in slice_int_axes]
+            selected_data = data[:, slice_data]
+
+            pop_slice_data.append(slice_data)
+            pop_features.append(selected_features)
+            pop_int_axes.append(selected_int_axes)
+            pop_data.append(selected_data)
+
+        pop_isSignal = [isSignal] * n_pop
+        pop_weight = [weight] * n_pop
+        pop_kwargs = [kwargs] * n_pop
+
+        pop_args = (pop_data, pop_features, pop_int_axes, pop_isSignal, pop_weight, pop_kwargs)
+
+        gen_energies = []
+
+        if multiprocess:
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                pool = executor.map(evolution_wrap, *pop_args, chunksize=chunksize)
+                for res, slice_data in zip(pool, pop_slice_data):
+                    (best_energy, pd_selections) = res
+                    if verbose:
+                        print(slice_data, 'energy:', best_energy)
+                    gen_energies.append(best_energy)
+                    population[tuple(slice_data)] = (best_energy, pd_selections)
+        else:
+            for slice_data, *args in zip(pop_slice_data, *pop_args):
+                best_energy, pd_selections = evolution_wrap(*args)
+                if verbose:
+                    print(slice_data, 'energy:', best_energy)
+                gen_energies.append(best_energy)
+                population[tuple(slice_data)] = (best_energy, pd_selections)
+
+        # sort population according to energy and take n best
+        population_list = sorted(population.items(), key=lambda item: item[1][0])[:n_best]
+
+        best_gen_energy = np.min(gen_energies)
+        energies.append(best_gen_energy)
+        print(f'generation {gen+1}/{n_gen}: {best_gen_energy:8.2f}, global best: {np.min(energies):8.2f}')
+
+    population = dict(sorted(population.items(), key=lambda item: item[1][0]))
+    return population, energies
+
+
+def iterate(data, isSignal, features=None, weight=1, int_axes=[], Nexp=None, eff_threshold=None, new_bins=3, min_iter=5, max_iter=20, rtol=1E-4, eval_function=None, quantile=1E-4, precision=4, roundDownUp=False, verbosity=1, **kwargs):
     # new_bins has to be at least 3 to create new bins
     if verbosity > 1:
         kwargs['verbose'] = True

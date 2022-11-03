@@ -284,7 +284,7 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices
                 Neve = prev_Neve.copy()
 
         if (step == 0) and (accepted / len(meshg[0]) < 0.9):
-            accepted_r = round_digits(accepted / len(meshg[0]), 3) * 100
+            accepted_r = round_digits(accepted / len(meshg[0]) * 100, 2)
             print('Only', accepted_r, '% of new states were accepted in the first iteration. Consider to increase the maximum temperature.')
 
         if (step // print_every) > ((step - 1) // print_every):
@@ -300,7 +300,7 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices
     if verbose:  # for last step
         print_progress(step, steps, T, E, accepted / norm / len(meshg[0]), improved / norm / len(meshg[0]))
     if (improved / norm / len(meshg[0]) > 0.01):
-        improved_r = round_digits(improved / norm / len(meshg[0]), 3) * 100
+        improved_r = round_digits(improved / norm / len(meshg[0]) * 100, 2)
         print('Still', improved_r, '% of new states improved in the last iteration. Consider to decrease the minimum temperature.')
 
     return best_state, best_energy
