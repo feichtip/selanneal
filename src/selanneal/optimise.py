@@ -178,7 +178,7 @@ def evolution_wrap(selected_data, selected_features, selected_int_axes, isSignal
 
 
 def genetic(data, isSignal, features, weight=1, int_axes=[], n_sel_feat=6, verbose=False,
-            n_gen=10, n_pop=40, n_best=20, mutate_prob=0.3, multiprocess=True, chunksize=2, **kwargs):
+            n_gen=10, n_pop=50, n_best=20, mutate_prob=0.5, multiprocess=True, chunksize=2, **kwargs):
 
     # n_gen = 10  # how many generations to run
     # n_pop = 40  # how large is the overall population

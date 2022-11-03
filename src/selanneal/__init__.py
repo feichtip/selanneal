@@ -1,6 +1,6 @@
+from . import utils
 from .annealing import run
-from .optimise import iterate
-from .optimise import roc
+from .optimise import iterate, roc
 
 __all__ = [
     'run', 'iterate', 'roc'
