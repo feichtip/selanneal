@@ -22,6 +22,6 @@ python3 -m pip install selanneal
 ```
 * tutorial notebooks for basic usage in *examples*
 * training data is to be provided as numpy arrays representing the histogrammed number of signal and background events
-* hyper-parameters to tune the optimisation: <img src="https://github.com/feichtip/selanneal/blob/main/docs/_images/paras.png?raw=true" height="20">
-* the default figure of merit is <img src="https://github.com/feichtip/selanneal/blob/main/docs/_images/fom.png?raw=true" height="30">, but any objective function can be used
-* additionally, a ROC curve can be obtained by maximising the purity for a fixed signal efficiency
+* hyper-parameters to tune the optimisation: Tmin, Tmax, steps
+* the default figure of merit is N_sig/sqrt(N_sig + N_bkg), but any objective function can be used
+* additionally, a ROC curve can be obtained by maximising the purity for fixed signal efficiencies
