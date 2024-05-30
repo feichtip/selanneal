@@ -1,4 +1,7 @@
-# selanneal
+<img alt="selannel" width="350" src="https://github.com/feichtip/selanneal/blob/main/docs/_images/selanneal.png?raw=true"/>
+
+Optimising selections with simulated annealing
+==============================================
 
 Selanneal is a simple package for optimising multivariate selections via a figure of merit.
 The optimisation is performed for all given features simultaneously by utilising the simulated annealing method.
@@ -19,5 +22,6 @@ python3 -m pip install selanneal
 ```
 * tutorial notebooks for basic usage in *examples*
 * training data is to be provided as numpy arrays representing the histogrammed number of signal and background events
-* hyper-parameters to tune the optimisation: <img src="https://render.githubusercontent.com/render/math?math=T_{max},T_{min},N_{steps}">
-* the implemented figure of merit is <img src="https://render.githubusercontent.com/render/math?math=\frac{N_{sig}}{\sqrt{N_{sig}%2bN_{bkg}}}">
+* hyper-parameters to tune the optimisation: <img src="https://github.com/feichtip/selanneal/blob/main/docs/_images/paras.png?raw=true" height="20">
+* the default figure of merit is <img src="https://github.com/feichtip/selanneal/blob/main/docs/_images/fom.png?raw=true" height="30">, but any objective function can be used
+* additionally, a ROC curve can be obtained by maximising the purity for a fixed signal efficiency
