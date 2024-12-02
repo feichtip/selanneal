@@ -25,27 +25,29 @@ def create_axes(data, n_bins, n_int_axes=0, features=None, quantile=1E-4):
     return axes
 
 
-def histogram(data, axes, isSignal, weight=1):
+def histogram(data, axes, cat_id, weight=1):
     """
     fill histograms
+    returns list of histograms in order of descending cat_ids
+    in case of boolean cat_id, will return in order [True (signal), False (background)]
     """
-    h_sig = bh.Histogram(*axes, storage=bh.storage.Double())
-    h_bkg = bh.Histogram(*axes, storage=bh.storage.Double())
 
-    if not isSignal.dtype == bool:
-        isSignal = isSignal.astype(bool)
+    if cat_id.dtype == bool:
+        cat_id = cat_id.astype(int)
 
-    if isinstance(weight, int):
-        weight_sig = weight
-        weight_bkg = weight
-    else:
-        weight_sig = weight[isSignal]
-        weight_bkg = weight[~isSignal]
+    hs = []
+    for id in sorted(np.unique(cat_id), reverse=True):
+        h = bh.Histogram(*axes, storage=bh.storage.Double())
 
-    h_sig.fill(*data[isSignal].T, weight=weight_sig)
-    h_bkg.fill(*data[~isSignal].T, weight=weight_bkg)
+        if isinstance(weight, int):
+            h_weight = weight
+        else:
+            h_weight = weight[id == cat_id]
 
-    return h_sig, h_bkg
+        h.fill(*data[id == cat_id].T, weight=h_weight)
+        hs.append(h)
+
+    return hs
 
 
 def roc(data, isSignal, features, weight=1, int_axes=[], Nexp=None, roc_points=25, feat_per_rotation=7, init_feat_weights=None, final_eff=0, **kwargs):
@@ -141,7 +143,7 @@ def roc(data, isSignal, features, weight=1, int_axes=[], Nexp=None, roc_points=2
             # print('efficiency', efficiency, eff_threshold)
 
         assert np.isclose(purity, -best_energy), f'{purity} <--> {-best_energy}'
-        assert (efficiency > eff_threshold), f'{efficiency} <--> {eff_threshold}'
+        assert efficiency > eff_threshold, f'{efficiency} <--> {eff_threshold}'
 
         purities.append(purity)
         efficiencies.append(efficiency)
@@ -269,25 +271,27 @@ def genetic(data, isSignal, features, weight=1, int_axes=[], n_sel_feat=6, verbo
     return population, energies
 
 
-def iterate(data, isSignal, features=None, weight=1, int_axes=[], Nexp=None, eff_threshold=None, new_bins=3, min_iter=5, max_iter=20, rtol=1E-4, eval_function=None, quantile=1E-4, precision=4, roundDownUp=False, verbosity=1, **kwargs):
+def iterate(data, cat_id, features=None, weight=1, int_axes=[], Nexp=None, eff_threshold=None, new_bins=3, min_iter=5, max_iter=20, rtol=1E-4, eval_function=None, quantile=1E-4, precision=4, roundDownUp=False, verbosity=1, **kwargs):
     # new_bins has to be at least 3 to create new bins
     if verbosity > 1:
         kwargs['verbose'] = True
+    elif verbosity < 1:
+        kwargs['verbose'] = False
 
     max_bins = new_bins * 2 + 3
     new_axes = create_axes(data, max_bins, len(int_axes), features, quantile=quantile)
     prev_energy = 0
     for i in range(max_iter):
         axes = new_axes
-        h_sig, h_bkg = histogram(data, axes + int_axes, isSignal, weight)
-        hists = np.stack([h_sig.values(), h_bkg.values()], axis=-1)
+        hs = histogram(data, axes + int_axes, cat_id, weight)
+        hists = np.stack([h.values() for h in hs], axis=-1)
         best_state, best_energy = annealing.run(hists=hists,
                                                 n_hists=2,
                                                 Nexp=Nexp,
                                                 eff_threshold=eff_threshold,
                                                 mode='edges',
                                                 **kwargs)
-        N_sig, N_bkg = annealing.n_events(hists, state=best_state, mode='edges', n_dim=h_sig.ndim)
+        N_sig, N_bkg = annealing.n_events(hists, state=best_state, mode='edges', n_dim=hs[0].ndim)
 
         if verbosity > 0:
             printout = f'iteration {i}:  E={best_energy:>10.3f}'
@@ -330,9 +334,9 @@ def iterate(data, isSignal, features=None, weight=1, int_axes=[], Nexp=None, eff
             if not np.isclose(bin_edges[-1], upper_edge):
                 bin_edges = np.append(bin_edges, upper_edge)
 
-            assert(lb[0] <= ub[1])
-            assert(lb[0] < ub[0])
-            assert(lb[1] < ub[1])
+            assert lb[0] <= ub[1]
+            assert lb[0] < ub[0]
+            assert lb[1] < ub[1]
 
             new_axes.append(bh.axis.Variable(bin_edges, metadata=axis.metadata))
 
@@ -370,8 +374,8 @@ def numpy_selection(axes, best_state, indices=None, array_name='data'):
     selection = []
 
     indices = range(len(axes)) if indices is None else indices
-    assert(len(indices) == len(axes))
-    assert(len(indices) == len(best_state))
+    assert len(indices) == len(axes)
+    assert len(indices) == len(best_state)
 
     for i, axis, state in zip(indices, axes, best_state):
         if axis.value(state[1]) is None:

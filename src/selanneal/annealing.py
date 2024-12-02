@@ -1,11 +1,53 @@
 import math
+import os
 import random
+from functools import wraps
+from typing import Any, Callable, TypeVar
 
 import numba as nb
 import numpy as np
 
+T = TypeVar('T', bound=Callable[..., Any])
 
-@nb.njit
+
+def optional_njit(*numba_args, **numba_kwargs):
+    """
+    A decorator that optionally applies numba.njit based on environment variable.
+    Can be used with or without arguments: @optional_njit or @optional_njit(parallel=True)
+    """
+    try:
+        from numba import njit
+        numba_available = True
+    except ImportError:
+        numba_available = False
+
+    # Handle both @optional_njit and @optional_njit() cases
+    if len(numba_args) == 1 and len(numba_kwargs) == 0 and callable(numba_args[0]):
+        # @optional_njit case (no arguments)
+        func = numba_args[0]
+
+        # Check if Numba should be disabled
+        disable_numba = os.environ.get('DISABLE_NUMBA', '0') == '1'
+
+        if numba_available and not disable_numba:
+            return njit(func)
+
+        return func
+
+    # @optional_njit(...) case (with arguments)
+    def decorator(func: T) -> T:
+        # Check if Numba should be disabled
+        disable_numba = os.environ.get('DISABLE_NUMBA', '0') == '1'
+
+        if numba_available and not disable_numba:
+            return njit(*numba_args, **numba_kwargs)(func)
+
+        return func
+
+    return decorator
+
+
+@optional_njit
 def choose_state(n_dim):
     # change state
     a = random.randint(0, n_dim - 1)
@@ -15,7 +57,7 @@ def choose_state(n_dim):
     return a, b, c
 
 
-@nb.njit
+@optional_njit
 def valid_state(state, bins, a, b, c):
     # check boundaries and order of edges
     if b == 0:
@@ -29,14 +71,14 @@ def valid_state(state, bins, a, b, c):
         if (state[a, 1] + c) > bins[a]:
             return False
 
-    assert(state[a, 0] < state[a, 1])
-    assert(state[a, b] <= bins[a])
-    assert(state[a, b] >= 0)
+    assert state[a, 0] < state[a, 1]
+    assert state[a, b] <= bins[a]
+    assert state[a, b] >= 0
 
     return True
 
 
-@nb.njit
+@optional_njit
 def get_edge_slice(state, a, b, c):
     # calculate delta numerator, denominator
     sl_state = state.copy()
@@ -63,16 +105,16 @@ def get_edge_slice(state, a, b, c):
     return sign, get_slice(sl_state)
 
 
-@nb.njit
+@optional_njit
 def get_bin_slice(state, x, y):
     # calculate delta numerator, denominator
-    sign = -state[x, y] + ~state[x, y]
+    sign = -int(state[x, y]) + ~state[x, y]
     select_bin = np.asarray([[x, x + 1], [y, y + 1]])
     return sign, get_slice(select_bin)
 
 
-@nb.njit
-def energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights):
+@optional_njit
+def energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights, punzi_a=3, fom='significance'):
     if sparse_data is not None:
         """
         joining rows of state grid for covarince matrix
@@ -126,16 +168,20 @@ def energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_we
         # return np.sqrt(stat_error + sys_error) * 100 + nan_states
         return np.sqrt(stat_error + (0.1 * sys_error + 0.9 * variance)) * 100 + nan_states
     else:
-        Nsig, Nbkg = Neve
-        if (Nsig + Nbkg) != 0:
-            if Nexp is None and eff_threshold is None:
-                # significance FOM
-                return -Nsig / math.sqrt(Nsig + Nbkg)
+        if fom == 'significance':
+            Nsig, Nbkg = Neve
+            if (Nsig + Nbkg) != 0:
+                if Nexp is None or eff_threshold is None:
+                    # significance FOM
+                    return -Nsig / math.sqrt(Nsig + Nbkg)
+                else:
+                    # purity
+                    return -Nsig / (Nsig + Nbkg) * (Nsig / Nexp > eff_threshold)
             else:
-                # purity
-                return -Nsig / (Nsig + Nbkg) * (Nsig / Nexp > eff_threshold)
-        else:
-            return 0
+                return 0
+        elif fom == 'punzi':
+            Nsig, Nbkg = Neve
+            return -(Nsig / Nexp) / (punzi_a / 2 + math.sqrt(Nbkg))
 
 
 @nb.jit
@@ -167,7 +213,7 @@ def count_digits(m):
     return before, after - 1
 
 
-@nb.njit
+@optional_njit
 def print_progress(step, steps,  T, E, accept, improve):
     space = ' '
     progress_r = round_digits((step + 1) / steps, 3)
@@ -186,7 +232,7 @@ def print_progress(step, steps,  T, E, accept, improve):
               space * (12 - count_digits(accept_r)[1] - count_digits(improve_r)[0]), improve_r)
 
 
-@nb.njit
+@optional_njit
 def bin_coupling(state, x, y, bins, strength, moore=True):
     """
     return bin coupling difference: -(new state - old state)
@@ -210,11 +256,14 @@ def bin_coupling(state, x, y, bins, strength, moore=True):
     return -strength * (same_state.sum() - (~same_state).sum())
 
 
-@nb.njit
-def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices, sparse_data, cov_weights, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, moore, verbose):
+@optional_njit
+def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices, sparse_data, cov_weights, Tmin, Tmax, steps, meshg, bins, n_dim, coupling, mode, moore, verbose, punzi_a=3, fom='significance', custom_energy=None):
     state = initial_state.copy()
 
-    E = energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights)
+    if custom_energy is not None:
+        E = custom_energy(state)
+    else:
+        E = energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights, punzi_a=punzi_a, fom=fom)
     if verbose:
         print('inital temperature:', Tmax)
         print('final temperature:', Tmin)
@@ -232,7 +281,7 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices
 
     accepted = 0
     improved = 0
-    n_prints = 50
+    n_prints = min(steps, 50)
     print_every = int(steps / n_prints)
 
     for step in range(steps):
@@ -248,10 +297,15 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices
                 sign, sl = get_bin_slice(state, a, b)
                 state[a, b] = ~state[a, b]  # new state
 
-            dNeve = sign * hists[sl].copy().reshape(-1, hists.shape[-1]).sum(axis=0)  # sum over all except last axis
-            Neve += dNeve
-
-            E = energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights)
+            if custom_energy is not None:
+                """
+                custom energy function using only states, needs to be provided
+                """
+                E = custom_energy(state)
+            else:
+                dNeve = sign * hists[sl].copy().reshape(-1, hists.shape[-1]).sum(axis=0)  # sum over all except last axis
+                Neve += dNeve
+                E = energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_weights, punzi_a=punzi_a, fom=fom)
 
             # calculate delta e
             dE = E - prev_E
@@ -297,16 +351,17 @@ def start_anneal(initial_state, hists, Neve, Nexp, eff_threshold, sparse_indices
         T *= T_scaling
 
     norm = (steps - 1) % print_every
-    if verbose:  # for last step
-        print_progress(step, steps, T, E, accepted / norm / len(meshg[0]), improved / norm / len(meshg[0]))
-    if (improved / norm / len(meshg[0]) > 0.01):
-        improved_r = round_digits(improved / norm / len(meshg[0]) * 100, 2)
-        print('Still', improved_r, '% of new states improved in the last iteration. Consider to decrease the minimum temperature.')
+    if norm > 0:
+        if verbose:  # for last step
+            print_progress(step, steps, T, E, accepted / norm / len(meshg[0]), improved / norm / len(meshg[0]))
+        if (improved / norm / len(meshg[0]) > 0.01):
+            improved_r = round_digits(improved / norm / len(meshg[0]) * 100, 2)
+            print('Still', improved_r, '% of new states improved in the last iteration. Consider to decrease the minimum temperature.')
 
     return best_state, best_energy
 
 
-def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_threshold=None, cov_matrix=None, cov_weights=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, moore=True, verbose=True, mode='bins'):
+def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_threshold=None, cov_matrix=None, cov_weights=None, Tmin=0.001, Tmax=10, steps=1_000, coupling=0, moore=True, verbose=True, mode='bins', punzi_a=3, fom='significance', custom_energy=None):
 
     if hists is None:
         if h_signal is None or h_background is None:
@@ -328,7 +383,7 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
     sparse_data = None
 
     if mode == 'bins':
-        assert(n_dim == 2)
+        assert n_dim == 2
         initial_state = np.random.randint(0, 2, size=bins, dtype='bool')
         meshg = np.meshgrid(range(initial_state.shape[0]), range(initial_state.shape[1]))
         meshg = (meshg[0].flatten(), meshg[1].flatten())
@@ -342,7 +397,7 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
         initial_state = np.array([[0, bins[i]] for i in range(n_dim)], dtype='int')
         meshg = ([0], [0])
 
-    code = f"""global get_slice\n@nb.njit\ndef get_slice(state):
+    code = f"""global get_slice\n@optional_njit\ndef get_slice(state):
     return ({", ".join(f"slice(state[{i}, 0], state[{i}, 1])" for i in range(n_dim))})
     """
     exec(code)
@@ -366,14 +421,20 @@ def run(h_signal=None, h_background=None, hists=None, n_hists=2, Nexp=None, eff_
                                            coupling,
                                            mode,
                                            moore,
-                                           verbose)
+                                           verbose,
+                                           punzi_a,
+                                           fom,
+                                           custom_energy)
 
     if verbose:
         print('\nbest energy:', best_energy)
 
     # calculate the energy again based on the best state and check if it is consistent
     Neve = n_events(hists, best_state, mode, n_dim)
-    energy_check = energy(Neve, Nexp, eff_threshold, best_state, sparse_indices, sparse_data, cov_weights)
+    if custom_energy is not None:
+        energy_check = custom_energy(best_state)
+    else:
+        energy_check = energy(Neve, Nexp, eff_threshold, best_state, sparse_indices, sparse_data, cov_weights, punzi_a=punzi_a, fom=fom)
     assert np.isclose(best_energy, energy_check), f'{best_energy:.4f} <--> {energy_check:.4}'
 
     if mode == 'edges':
