@@ -170,7 +170,7 @@ def energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_we
     else:
         if fom == 'significance':
             Nsig, Nbkg = Neve
-            if (Nsig + Nbkg) != 0:
+            if (Nsig + Nbkg) > 0:
                 if Nexp is None or eff_threshold is None:
                     # significance FOM
                     return -Nsig / math.sqrt(Nsig + Nbkg)
@@ -178,10 +178,14 @@ def energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_we
                     # purity
                     return -Nsig / (Nsig + Nbkg) * (Nsig / Nexp > eff_threshold)
             else:
+                assert (Nsig + Nbkg) > -1E-6, 'negative value is too large for numerical error: ' + str(Nsig + Nbkg)
                 return 0
         elif fom == 'punzi':
             Nsig, Nbkg = Neve
-            return -(Nsig / Nexp) / (punzi_a / 2 + math.sqrt(Nbkg))
+            if Nexp is not None:  # important for JIT compilation, otherwise fails even if fom is not punzi, if no Nexp is provided
+                return -(Nsig / Nexp) / (punzi_a / 2 + math.sqrt(Nbkg))
+
+            assert Nexp is not None, 'should provide Nexp when selecting punzi'
 
 
 @nb.jit
