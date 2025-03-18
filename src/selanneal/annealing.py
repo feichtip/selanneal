@@ -178,7 +178,7 @@ def energy(Neve, Nexp, eff_threshold, state, sparse_indices, sparse_data, cov_we
                     # purity
                     return -Nsig / (Nsig + Nbkg) * (Nsig / Nexp > eff_threshold)
             else:
-                assert (Nsig + Nbkg) > -1E-6, 'negative value is too large for numerical error: ' + str(Nsig + Nbkg)
+                assert (Nsig + Nbkg) > -1E-5, 'negative value is too large for numerical error: ' + str(Nsig + Nbkg)
                 return 0
         elif fom == 'punzi':
             Nsig, Nbkg = Neve

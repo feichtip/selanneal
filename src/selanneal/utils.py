@@ -2,7 +2,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def ranking(features, population, rank_threshold=20):
+def ranking(features, population, rank_threshold=500):
+    """
+    rank_threshold: cutoff rank of population when sorted according to energy
+    """
     # sort population dict after energy
     population_list = sorted(population.items(), key=lambda item: item[1][0])[:rank_threshold]
     feat_indices = [list(key) for key, val in population_list]

@@ -35,6 +35,8 @@ def histogram(data, axes, cat_id, weight=1):
     if cat_id.dtype == bool:
         cat_id = cat_id.astype(int)
 
+    is_int_ax = [isinstance(ax, bh.axis.IntCategory) for ax in axes]
+
     hs = []
     for id in sorted(np.unique(cat_id), reverse=True):
         h = bh.Histogram(*axes, storage=bh.storage.Double())
@@ -44,7 +46,8 @@ def histogram(data, axes, cat_id, weight=1):
         else:
             h_weight = weight[id == cat_id]
 
-        h.fill(*data[id == cat_id].T, weight=h_weight)
+        data_list = [data[id == cat_id, i].astype(int) if is_int else data[id == cat_id, i] for i, is_int in enumerate(is_int_ax)]
+        h.fill(*data_list, weight=h_weight)
         hs.append(h)
 
     return hs
@@ -268,7 +271,7 @@ def genetic(data, isSignal, features, weight=1, int_axes=[], n_sel_feat=6, verbo
         print(f'generation {gen+1}/{n_gen}: {best_gen_energy:8.2f}, global best: {np.min(energies):8.2f}')
 
     population = dict(sorted(population.items(), key=lambda item: item[1][0]))
-    return population, energies
+    return features, population, energies
 
 
 def iterate(data, cat_id, features=None, weight=1, int_axes=[], Nexp=None, eff_threshold=None, new_bins=3, min_iter=5, max_iter=20, rtol=1E-4, eval_function=None, quantile=1E-4, precision=4, roundDownUp=False, verbosity=1, **kwargs):
